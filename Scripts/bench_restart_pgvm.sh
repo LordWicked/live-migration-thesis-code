@@ -8,6 +8,7 @@ PG_PORT_BASE="${PG_PORT_BASE:-54320}"
 GUEST_USER="user"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/pgvm_bench}"
 OUT_CSV="${OUT_CSV:-boot-benchmark.csv}"
+MEM="${MEM:-8}"
 
 echo "run, shh_ready_ms, pg_ready_ms" > "$OUT_CSV"
 
@@ -23,7 +24,7 @@ for run in $(seq 1 "$RUNS"); do
 
 	qemu-system-x86_64 \
 		-accel kvm \
-		-m 8G \
+		-m ${MEM}G \
 		-smp 4 \
 		-cpu host \
 		-snapshot \
@@ -59,7 +60,7 @@ for run in $(seq 1 "$RUNS"); do
 		sleep 0.1
 	done
 	ssh_ready_ns=$(date +%s%N)
-	ctr=0
+	# ctr=0
 	until ssh -i "$SSH_KEY" \
     	-o BatchMode=yes \
     	-o StrictHostKeyChecking=no \
@@ -67,7 +68,7 @@ for run in $(seq 1 "$RUNS"); do
     	-o ConnectTimeout=1 \
     	-p "$ssh_port" \
     	"$GUEST_USER@127.0.0.1" \
-    	'pg_isready -h 127.0.0.1 -p 5432 -q -t 1' >/dev/null 2>&1
+    	'pg_isready -h 127.0.0.1 -p 5432 -q -t 1' #>/dev/null 2>&1
 	do
 		if ! kill -0 "$qemu_pid" 2>/dev/null; then
 			echo "QEMU exited unexpectedly before PostgreSQL was ready in run $run" >&2
