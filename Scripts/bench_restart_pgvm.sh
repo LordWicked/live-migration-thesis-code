@@ -56,19 +56,26 @@ for run in $(seq 1 "$RUNS"); do
 			echo "QEMU exited unexpectedly in run $run" >&2
 			exit 1
 		fi
-		sleep 0.2
+		sleep 0.1
 	done
 	ssh_ready_ns=$(date +%s%N)
 	ctr=0
-	until pg_isready -h 127.0.0.1 -p "$pg_port" -q -t 1 >/dev/null 2>&1
+	until ssh -i "$SSH_KEY" \
+    	-o BatchMode=yes \
+    	-o StrictHostKeyChecking=no \
+    	-o UserKnownHostsFile=/dev/null \
+    	-o ConnectTimeout=1 \
+    	-p "$ssh_port" \
+    	"$GUEST_USER@127.0.0.1" \
+    	'pg_isready -h 127.0.0.1 -p 5432 -q -t 1' >/dev/null 2>&1
 	do
 		if ! kill -0 "$qemu_pid" 2>/dev/null; then
-			echo "QEMU exited unexpectedly in run $run" >&2
+			echo "QEMU exited unexpectedly before PostgreSQL was ready in run $run" >&2
 			exit 1
 		fi
-		echo "$ctr"
-		ctr=$((ctr + 1))
-		sleep 0.2
+		# echo "$ctr"
+		# ctr=$((ctr + 1))
+		sleep 0.1
 	done
 	pg_ready_ns=$(date +%s%N)
 
