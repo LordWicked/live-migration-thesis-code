@@ -16,8 +16,8 @@ qemu-system-x86_64 \
 	-drive file="$DST",if=virtio,format=qcow2 \
 	-qmp unix:"$DST_QMP",server=on,wait=off \
 	-incoming unix:"$MIG_SOCK" \
-	-display none \
 	-daemonize
+	# -display none \
 
 qemu-system-x86_64 \
 	-accel kvm \
@@ -26,5 +26,5 @@ qemu-system-x86_64 \
   	-cpu host \
   	-drive file="$SRC",if=virtio,format=qcow2 \
   	-qmp unix:"$SRC_QMP",server=on,wait=off \
-  	-display none \
-  	-daemonize
+  	-daemonize 
+  	# -display none \
