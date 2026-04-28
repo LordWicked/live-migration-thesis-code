@@ -10,7 +10,7 @@ DST_PORT_BASE="${SSH_PORT_BASE:-4444}"
 GUEST_USER="user"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/pgvm_bench}"
 OUT_CSV="${OUT_CSV:-migration-benchmark.csv}"
-MEM="${MEM:-8}"
+MEM="${MEM:-4}"
 
 mkdir -p "$OVERLAY_DIR"
 mkdir -p "$LOGS"
