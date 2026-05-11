@@ -3,6 +3,7 @@ set -euo pipefail
 
 RUNS="${RUNS:-10}"
 IMAGE="${1:?Image path}"
+OVERLAY="${2:?Overlay path}"
 SSH_PORT_BASE="${SSH_PORT_BASE:-2222}"
 PG_PORT_BASE="${PG_PORT_BASE:-54320}"
 GUEST_USER="user"
@@ -15,11 +16,14 @@ echo "run, shh_ready_ms, pg_ready_ms" > "$OUT_CSV"
 for run in $(seq 1 "$RUNS"); do
 	ssh_port=$((SSH_PORT_BASE + run - 1))
 	pg_port=$((PG_PORT_BASE + run - 1))
-	qmp_sock=$"/tmp/pgvm-qmp-${run}.sock"
+	qmp_sock="/tmp/pgvm-qmp-${run}.sock"
 	qemu_log="qemu-run-${run}.log"
+	overlay="${OVERLAY}/run${run}.qcow2"
 
 	rm -f "$qmp_sock" "$qemu_log"
 
+	qemu-img create -o "backing_file=$IMAGE,backing_fmt=qcow2" -f qcow2 "$overlay" > /dev/null 2>&1
+	break
 	start_ns=$(date +%s%N)
 
 	qemu-system-x86_64 \
@@ -43,8 +47,6 @@ for run in $(seq 1 "$RUNS"); do
 	}
 	trap cleanup EXIT
 
-#	echo "ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -p "$ssh_port" "$GUEST_USER@127.0.0.1""
-#	sleep 10
 	until ssh -i "$SSH_KEY" \
 		-o BatchMode=yes \
 		-o StrictHostKeyChecking=no \
@@ -60,7 +62,6 @@ for run in $(seq 1 "$RUNS"); do
 		sleep 0.1
 	done
 	ssh_ready_ns=$(date +%s%N)
-	# ctr=0
 	until ssh -i "$SSH_KEY" \
     	-o BatchMode=yes \
     	-o StrictHostKeyChecking=no \
@@ -74,8 +75,6 @@ for run in $(seq 1 "$RUNS"); do
 			echo "QEMU exited unexpectedly before PostgreSQL was ready in run $run" >&2
 			exit 1
 		fi
-		# echo "$ctr"
-		# ctr=$((ctr + 1))
 		sleep 0.1
 	done
 	pg_ready_ns=$(date +%s%N)
