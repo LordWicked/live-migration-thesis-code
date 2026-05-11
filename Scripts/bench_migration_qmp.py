@@ -8,6 +8,10 @@ import socket
 import subprocess
 import time
 import argparse
+import asyncio
+from qemu.qmp import QMPClient
+import psutil
+from typing import Any, cast
 from typing import Optional, TextIO
 
 @dataclass
@@ -30,7 +34,7 @@ class Config:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Benchmark QEMu+QMP live migration for a PostgreSQL VM"
+        description="Benchmark QEMU+QMP live migration for a PostgreSQL VM"
     )
 
     parser.add_argument("image", type=Path, help="Base qcow2 image")
@@ -53,8 +57,6 @@ def build_parser() -> argparse.ArgumentParser:
 def create_overlay_image(base: Path, overlay: Path) -> None:
     if overlay.exists():
         overlay.unlink()
-    print(base)
-    print(overlay)
     subprocess.run([
         "qemu-img", "create", "-f", "qcow2", str(overlay), 
         "-o", f"backing_file={base},backing_fmt=qcow2"
@@ -82,17 +84,13 @@ def start_vm(overlay: Path, ssh_port: int, qmp_sock: Path,
         stderr=log_file
     )
 
-def cleanup(src_sock: Path, dst_sock: Path, src_log: TextIO, dst_log: TextIO) -> None:
+async def cleanup(src: VMMonitor, dst: VMMonitor, src_log: TextIO, dst_log: TextIO) -> None:
+    await dst.close()
+    await src.close()
     if src_log and not src_log.closed:
         src_log.close()
     if dst_log and not dst_log.closed:
         dst_log.close()
-    if dst_sock.exists():
-        qmp_cmd(dst_sock, "quit")
-        dst_sock.unlink()
-    if src_sock.exists():
-        qmp_cmd(src_sock, "quit")
-        src_sock.unlink()
             
 def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float, log_file: TextIO | None = None) -> subprocess.CompletedProcess[str]:
     cmd = ["ssh", "-o", "BatchMode=yes", 
@@ -121,48 +119,57 @@ def wait_for_return(user: str, port: int, key: Path, remote_cmd: str, timeout: f
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Timed out waiting for SSH on port {port}")
         time.sleep(0.1)
-        
-def qmp_cmd(sock_path: Path, execute: str, arguments: dict | None = None) -> dict:
-    if arguments is None:
-        arguments = {}
-        
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.connect(str(sock_path))
-        
-        greeting = s.recv(4096)
-        
-        # Capabilities
-        s.sendall(json.dumps({"execute": "qmp_capabilities","id": "cap"}).encode() + b"\n")
-        cap_reply = s.recv(4096)
-        
-        # Execute
-        s.sendall(json.dumps({"execute": execute,"arguments": arguments, "id": "cmd"}).encode() + b"\n")
-        exe_reply = s.recv(4096).decode()
 
-        if "event" in exe_reply:
-            return {"event": exe_reply}
-        
-    for line in exe_reply.splitlines():
-        obj = json.loads(line)
-        if obj.get("id") == "cmd":
-            return obj
-        
-    raise RuntimeError(f"No QMP reply for {execute}")
+class VMMonitor:
+    def __init__(self, name, sock_path: Path, qmp_log: TextIO):
+        self.name = name
+        self.sock_path = sock_path
+        self.qmp = QMPClient(name)
+        self.qmp_log = qmp_log
+        self.connected = False
 
-def wait_for_status(sock_path: Path, timeout: float, goal_status: str) -> None:
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            status = qmp_cmd(sock_path, "query-status")["return"]["status"]
-            if  status == goal_status:
+    async def connect(self):
+        await self.qmp.connect(str(self.sock_path)) 
+        self.connected = True
+
+    async def close(self):
+        if self.connected:
+            await self.quit()
+            await self.qmp.disconnect()
+            self.connected = False
+
+    async def cmd(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        if args is None:
+            args = {}
+        self.qmp_log.write(f"QMP cmd [{self.name}] {name} args={args}")
+        reply = cast(dict[str, Any], await self.qmp.execute(name, arguments=args))
+        self.qmp_log.write(f"QMP reply [{self.name}] {name}: {reply}")
+        return reply
+
+    # async def query_status(self): return await self.cmd("query-status")
+
+    async def wait_for_qmp(self, proc: subprocess.Popen, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        error =  None
+        while True:
+            if proc.poll() is not None:
+                raise RuntimeError(f"{self.name} exited before QMP was ready")
+            try:
+                await self.connect()
                 return
-        except Exception as e:
-            pass
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"Timed out waiting for {goal_status} status on socket {sock_path}")
-        time.sleep(0.1)
+            except Exception as e:
+                error = e
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
     
-def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, local_path: Path, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+    async def query_migrate(self): return await self.cmd("query-migrate")
+    
+    async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
+    
+    async def quit(self): 
+        return await self.cmd("quit")
+    
+def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, local_path: Path, timeout: float = 30.0, log_file: TextIO | None = None) -> subprocess.CompletedProcess[str]:
     local_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -176,6 +183,14 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         str(local_path),
     ]
 
+    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    if log_file is not None:
+        log_file.write(f"SSH command: {' '.join(cmd)}\n")
+        log_file.write(f"Return code: {proc.returncode}\n")
+        log_file.write(f"Stdout: {proc.stdout}\n")
+        log_file.write(f"Stderr: {proc.stderr}\n")
+        log_file.flush()
+
     return subprocess.run(
         cmd,
         text=True,
@@ -183,14 +198,14 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         timeout=timeout,
     )
 
-def main() -> None:
+async def main() -> None:
     config = Config(**vars(build_parser().parse_args()))
     config.log_path.mkdir(parents=True, exist_ok=True)
     config.overlay.mkdir(parents=True, exist_ok=True)
 
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "migration_start", "migration_end", "benchmark_start", "benchmark_end"])
+        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "migration_start", "migration_end", "benchmark_end"])
 
     for run in range (1, config.runs + 1):
         print(f"Run {run}/{config.runs}")
@@ -198,9 +213,13 @@ def main() -> None:
         dst_port = config.dst_port_base + run - 1
         src_sock = Path(f"/tmp/src-pgvm-qmp-{run}.sock")
         dst_sock = Path(f"/tmp/dst-pgvm-qmp-{run}.sock")
-        src_log = open(config.log_path/f"src-run-{run}.log", "w")
-        dst_log = open(config.log_path/f"dst-run-{run}.log", "w")
-        overlay=config.overlay / f"run{run}.qcow2"
+        src_log = open(config.log_path/f"src-run-{run}.log", "a")
+        dst_log = open(config.log_path/f"dst-run-{run}.log", "a")
+        mig_log = open(config.log_path/f"mig-stats-run-{run}.json", "a")
+        src = VMMonitor(f"src{run}", src_sock, src_log)
+        dst = VMMonitor(f"dst{run}", dst_sock, dst_log)
+        overlay = config.overlay / f"run{run}.qcow2"
+        
         try:
             create_overlay_image(base=config.image, overlay=overlay)
 
@@ -208,11 +227,8 @@ def main() -> None:
             src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb)
             dst_vm = start_vm(overlay=overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, incoming_uri="unix:/tmp/mig.sock")
             
-            if src_vm.poll() is not None:
-                raise RuntimeError("source VM exited immediately")
-            wait_for_status(src_sock, 20.0, "running")
-            if dst_vm.poll() is not None:
-                raise RuntimeError("destination VM exited immediately")
+            await src.wait_for_qmp(src_vm, 20)
+            await dst.wait_for_qmp(dst_vm, 20)
             
             # Wait for SSH TODO and bench
             wait_for_return(user=config.guest_user, port=src_port, 
@@ -237,10 +253,11 @@ def main() -> None:
             time.sleep (config.sleep_timer)
 
             # Start migration via QMP and measure time
-            qmp_cmd(src_sock, "migrate", {"uri": "unix:/tmp/mig.sock"})
+            await src.migrate("unix:/tmp/mig.sock")
             t_migration_started = time.monotonic()
 
             # Wait for migration and benchmark to finish
+            json_data = []
             deadline = time.monotonic() + 300.0
             migration_done = False
             bench_done = False
@@ -250,11 +267,13 @@ def main() -> None:
                 now = time.monotonic()
 
                 if not migration_done:
-                    migration_status = qmp_cmd(src_sock, "query-migrate")["return"]["status"]
-                    if  migration_status == "completed":
+                    mig = await src.query_migrate()
+                    json_data.append(mig)
+                    status = mig["status"]
+                    if  status == "completed":
                         migration_done = True
                         t_migration_completed = now
-                    elif migration_status == "failed":
+                    elif status == "failed":
                         raise RuntimeError("Migration failed according to QMP")
                     
                 if not bench_done:
@@ -268,7 +287,7 @@ def main() -> None:
                     except subprocess.TimeoutExpired:
                         pass
 
-                print(f"mig: {migration_done} | bench: {bench_done}")
+                # print(f"mig: {migration_done} | bench: {bench_done}")
                 if migration_done and bench_done:
                     break
 
@@ -282,34 +301,28 @@ def main() -> None:
 
                 time.sleep(0.1)
 
-            proc = ssh_command(
-                user=config.guest_user,
-                port=dst_port,
-                key=config.ssh_key,
-                remote_cmd=f"cat /tmp/bench.log",
-                timeout=5.0,
-                log_file=dst_log
-            )
-            if proc.returncode == 0:
-                with open(config.log_path / f"bench-run-{run}", "w") as f:
-                    f.write(proc.stdout)
-
+            scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}", log_file=dst_log)
+            
+            find_pg_log = ssh_command(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=dst_log)
+            scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}.json", log_file=dst_log)
+            
             # Append results to CSV
+            mig_log.write(json.dumps(json_data))
             with open(config.out_csv, "a", newline="") as csvfile:
                 csv.writer(csvfile).writerow([
                     run, 
                     t_ssh_ready - t_start, 
                     t_postgres_ready - t_start, 
+                    t_bench_started - t_start,
                     t_migration_started - t_start, 
                     t_migration_completed - t_start,
-                    t_bench_started - t_start,
                     t_bench_completed - t_start
                 ])
 
         except:
             raise
         finally:
-            cleanup(src_sock, dst_sock, src_log, dst_log)
+            await cleanup(src, dst, src_log, dst_log)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
