@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import csv
 import json
-import socket
 import subprocess
 import time
 import argparse
@@ -83,14 +82,6 @@ def start_vm(overlay: Path, ssh_port: int, qmp_sock: Path,
         stdout=log_file,
         stderr=log_file
     )
-
-async def cleanup(src: VMMonitor, dst: VMMonitor, src_log: TextIO, dst_log: TextIO) -> None:
-    await dst.close()
-    await src.close()
-    if src_log and not src_log.closed:
-        src_log.close()
-    if dst_log and not dst_log.closed:
-        dst_log.close()
             
 def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float, log_file: TextIO | None = None) -> subprocess.CompletedProcess[str]:
     cmd = ["ssh", "-o", "BatchMode=yes", 
@@ -120,55 +111,6 @@ def wait_for_return(user: str, port: int, key: Path, remote_cmd: str, timeout: f
             raise TimeoutError(f"Timed out waiting for SSH on port {port}")
         time.sleep(0.1)
 
-class VMMonitor:
-    def __init__(self, name, sock_path: Path, qmp_log: TextIO):
-        self.name = name
-        self.sock_path = sock_path
-        self.qmp = QMPClient(name)
-        self.qmp_log = qmp_log
-        self.connected = False
-
-    async def connect(self):
-        await self.qmp.connect(str(self.sock_path)) 
-        self.connected = True
-
-    async def close(self):
-        if self.connected:
-            await self.quit()
-            await self.qmp.disconnect()
-            self.connected = False
-
-    async def cmd(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
-        if args is None:
-            args = {}
-        self.qmp_log.write(f"QMP cmd [{self.name}] {name} args={args}")
-        reply = cast(dict[str, Any], await self.qmp.execute(name, arguments=args))
-        self.qmp_log.write(f"QMP reply [{self.name}] {name}: {reply}")
-        return reply
-
-    # async def query_status(self): return await self.cmd("query-status")
-
-    async def wait_for_qmp(self, proc: subprocess.Popen, timeout: float) -> None:
-        deadline = time.monotonic() + timeout
-        error =  None
-        while True:
-            if proc.poll() is not None:
-                raise RuntimeError(f"{self.name} exited before QMP was ready")
-            try:
-                await self.connect()
-                return
-            except Exception as e:
-                error = e
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
-    
-    async def query_migrate(self): return await self.cmd("query-migrate")
-    
-    async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
-    
-    async def quit(self): 
-        return await self.cmd("quit")
-    
 def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, local_path: Path, timeout: float = 30.0, log_file: TextIO | None = None) -> subprocess.CompletedProcess[str]:
     local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -197,6 +139,61 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         capture_output=True,
         timeout=timeout,
     )
+
+class VMMonitor:
+    def __init__(self, name, sock_path: Path, qmp_log: TextIO):
+        self.name = name
+        self.sock_path = sock_path
+        self.qmp = QMPClient(name)
+        self.qmp_log = qmp_log
+        self.connected = False
+
+    async def connect(self):
+        await self.qmp.connect(str(self.sock_path)) 
+        self.connected = True
+
+    async def close(self):
+        if self.connected:
+            await self.quit()
+            await self.qmp.disconnect()
+            self.connected = False
+
+    async def cmd(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        if args is None:
+            args = {}
+        self.qmp_log.write(f"QMP cmd [{self.name}] {name} args={args}")
+        reply = cast(dict[str, Any], await self.qmp.execute(name, arguments=args))
+        self.qmp_log.write(f"QMP reply [{self.name}] {name}: {reply}")
+        return reply
+
+    async def wait_for_qmp(self, proc: subprocess.Popen, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        error =  None
+        while True:
+            if proc.poll() is not None:
+                raise RuntimeError(f"{self.name} exited before QMP was ready")
+            try:
+                await self.connect()
+                return
+            except Exception as e:
+                error = e
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
+    
+    async def query_migrate(self): return await self.cmd("query-migrate")
+    
+    async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
+    
+    async def quit(self): 
+        return await self.cmd("quit")
+    
+async def cleanup(src: VMMonitor, dst: VMMonitor, src_log: TextIO, dst_log: TextIO) -> None:
+    await dst.close()
+    await src.close()
+    if src_log and not src_log.closed:
+        src_log.close()
+    if dst_log and not dst_log.closed:
+        dst_log.close()
 
 async def main() -> None:
     config = Config(**vars(build_parser().parse_args()))
@@ -230,7 +227,7 @@ async def main() -> None:
             await src.wait_for_qmp(src_vm, 20)
             await dst.wait_for_qmp(dst_vm, 20)
             
-            # Wait for SSH TODO and bench
+            # Wait for SSH and bench
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="true", timeout=60.0)
             t_ssh_ready = time.monotonic()
@@ -239,7 +236,7 @@ async def main() -> None:
                             key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=60.0)
             t_postgres_ready = time.monotonic()
 
-            # TODO Postgres payload (needs to return yscb-a run output)
+            # Postgres payload (needs to return yscb-a run output)
             bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count}"
             ssh_command(user=config.guest_user, 
                         port=src_port, 
@@ -247,7 +244,7 @@ async def main() -> None:
                         remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
-                        log_file=dst_log)
+                        log_file=dst_log) # TODO Correct log?
             t_bench_started = time.monotonic()
 
             time.sleep (config.sleep_timer)
@@ -287,7 +284,6 @@ async def main() -> None:
                     except subprocess.TimeoutExpired:
                         pass
 
-                # print(f"mig: {migration_done} | bench: {bench_done}")
                 if migration_done and bench_done:
                     break
 
@@ -319,8 +315,8 @@ async def main() -> None:
                     t_bench_completed - t_start
                 ])
 
-        except:
-            raise
+        except Exception as e:
+            raise e
         finally:
             await cleanup(src, dst, src_log, dst_log)
 
