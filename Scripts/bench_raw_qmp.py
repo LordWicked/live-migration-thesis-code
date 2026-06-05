@@ -17,6 +17,7 @@ from typing import Optional, TextIO
 class Config:
     image: Path
     overlay: Path
+    restart: bool
     runs: int
     log_path: Path
     src_port_base: int
@@ -25,8 +26,17 @@ class Config:
     ssh_key: Path
     out_csv: Path
     mem_gb: int
+    cores: int
+    cpu: str
     record_count: int
     operation_count: int
+    threads: int
+    write: int
+    read: int
+    upd: int
+    ins: int
+    rm: int
+    scan: int
     sleep_timer: float
     additional_args: Optional[str] = None
 
@@ -39,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("image", type=Path, help="Base qcow2 image")
     # TODO Put overlay images fixed /var/tmp or something
     parser.add_argument("overlay", type=Path, help="Path where overlay images will be stored.")
+    parser.add_argument("--restart", type=bool, default=False, help="Toggle restarting the VM during benchmark.")
     parser.add_argument("--runs", type=int, default=10, help="Number of benchmark runs (default: 10)")
     parser.add_argument("--log-path", type=Path, default=Path("./logs"), help="Path to log files")
     parser.add_argument("--src-port-base", type=int, default=2222, help="Base host SSH port for source VM")
@@ -47,9 +58,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ssh-key", type=Path, default=Path(Path.home()/".ssh/pgvm_bench"), help="SSH private key path")
     parser.add_argument("--out-csv", type=Path, default=Path("./benchmarks/migration-benchmark-py.csv"), help="CSV output file")
     parser.add_argument("--mem-gb", type=int, default=4, help="Guest memory size in GiB")
+    parser.add_argument("--cores", type=int, default=4, help="Amount of virtual CPU cores allocated to VM.")
+    parser.add_argument("--cpu", type=str, default="host", help="Configure VM CPU model. host for host-passthrough.")
     parser.add_argument("--record-count", type=int, default=100000, help="Record count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--operation-count", type=int, default=100000, help="Operation count for the YCSB-A benchmark to be executed before migration.")
-    parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and migration start in seconds")
+    parser.add_argument("--threads", type=int, default=1, help="Thread count for PostgreSQL benchmark multithreading.")
+    parser.add_argument("--write-proportion", type=int, default=1, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--read-proportion", type=int, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--update-proportion", type=int, default=0, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
+    parser.add_argument("--insert-proportion", type=int, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--readmodification-proportion", type=int, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--scan-proportion", type=int, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
+
+    parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and restart in seconds")
     parser.add_argument("--additional-args", type=str, default=None, help="Additional QEMU command line arguments (i.e. for postcopy or CPU setup)")
     return parser
 
@@ -62,12 +83,12 @@ def create_overlay_image(base: Path, overlay: Path) -> None:
     ], check=True)
 
 def start_vm(overlay: Path, ssh_port: int, qmp_sock: Path, 
-             log_file: TextIO, mem_gb: int, incoming_uri: Optional[str] = None, additional_args: Optional[str] = None) -> subprocess.Popen:
+             log_file: TextIO, mem_gb: int, cores: int, cpu: str, incoming_uri: Optional[str] = None, additional_args: Optional[str] = None) -> subprocess.Popen:
     cmd = ["qemu-system-x86_64",
            "-accel", "kvm",
            "-m", f"{mem_gb}G",
-           "-smp", "4",
-           "-cpu", "host",
+           "-smp", f"{cores}",
+           "-cpu", f"{cpu}",
            "-drive", f"file={overlay},if=virtio,format=qcow2",
            "-nic", f"user,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
            "-qmp", f"unix:{qmp_sock},server=on,wait=off",
@@ -179,18 +200,34 @@ class VMMonitor:
                 error = e
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
+            
+    async def powerdown(self): return await self.cmd("system_powerdown")
     
-    async def query_migrate(self): return await self.cmd("query-migrate")
+    # async def query_migrate(self): return await self.cmd("query-migrate")
     
-    async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
+    # async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
     
     async def quit(self): 
         return await self.cmd("quit")
     
-async def cleanup(src: VMMonitor, src_log: TextIO) -> None:
+async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_vm: subprocess.Popen, src_log: TextIO, dst_log: TextIO) -> None:
+    await dst.close()
     await src.close()
+    try:
+        await asyncio.to_thread(src_vm.wait, timeout=20.0)
+        await asyncio.to_thread(dst_vm.wait, timeout=20.0)
+    except subprocess.TimeoutExpired:
+        src_vm.kill()
+        dst_vm.kill()
+        await asyncio.to_thread(src_vm.wait)
+        await asyncio.to_thread(dst_vm.wait)
+
+    # Path("/tmp/mig.sock").unlink()
+
     if src_log and not src_log.closed:
         src_log.close()
+    if dst_log and not dst_log.closed:
+        dst_log.close()
 
 async def main() -> None:
     config = Config(**vars(build_parser().parse_args()))
@@ -200,20 +237,27 @@ async def main() -> None:
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
         csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "migration_start", "migration_end", "benchmark_end"])
+        
+    t_0 = time.monotonic()
 
     for run in range (1, config.runs + 1):
         print(f"Run {run}/{config.runs}")
         src_port = config.src_port_base + run - 1
         src_sock = Path(f"/tmp/src-pgvm-qmp-{run}.sock")
+        src2_sock = Path(f"/tmp/src-pgvm-qmp-reboot-{run}.sock")
         src_log = open(config.log_path/f"src-run-{run}.log", "a")
+        src2_log = open(config.log_path/f"src-run-{run}-reboot.log", "a")
         src = VMMonitor(f"src{run}", src_sock, src_log)
+        src2 = VMMonitor(f"src{run}_reboot", src2_sock, src2_log)
         overlay = config.overlay / f"run{run}.qcow2"
         
         try:
             create_overlay_image(base=config.image, overlay=overlay)
+            t_start = time.monotonic()
+            print(f"Time elapsed: {t_start - t_0}")
 
             t_start = time.monotonic()
-            src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb)
+            src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
             
             await src.wait_for_qmp(src_vm, 20)
             
@@ -225,9 +269,11 @@ async def main() -> None:
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=60.0)
             t_postgres_ready = time.monotonic()
+            
+            ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count}"
+            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=2 -p readproportion={config.read} -p updateproportion={config.upd} -p insertproportion={config.ins} -p scanproportion={config.scan} -p readmodifywriteproportion={config.rm}"
             ssh_command(user=config.guest_user, 
                         port=src_port, 
                         key=config.ssh_key,
@@ -236,11 +282,49 @@ async def main() -> None:
                         timeout=10.0,
                         log_file=src_log)
             t_bench_started = time.monotonic()
+            
+            if(config.restart):
+                time.sleep(config.sleep_timer)  
+                t_shutdown_request = time.monotonic()
+                
+                ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="sudo -n systemctl poweroff", timeout=5.0, log_file=src_log)
+                                
+                try:
+                    await asyncio.to_thread(src_vm.wait, timeout=120.0)
+                except subprocess.TimeoutExpired:
+                    raise TimeoutError("Guest did not shut down cleanly after system_powerdown.")
+                
+                t_power_off = time.monotonic()
+                
+                if src.connected:
+                    await src.qmp.disconnect()
+                    src.connected = False
+                    
+                # maybe extra log:
+                src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                
+                await src2.wait_for_qmp(src_vm2, 20)
+                wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
+                t_ssh2_ready = time.monotonic()
+                
+                wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
+                
+                t_pg2_ready = time.monotonic()
+                
+                ssh_command(user=config.guest_user, 
+                        port=src_port, 
+                        key=config.ssh_key,
+                        remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
+                                    ">/tmp/bench.log 2>&1 &"), 
+                        timeout=10.0,
+                        log_file=src_log) # maybe extra log
+            
 
             # Wait for benchmark to finish
             deadline = time.monotonic() + 300.0
             bench_done = False
             t_bench_completed = 0.0
+            warning = False
             while True:
                 now = time.monotonic()
                     
@@ -256,9 +340,10 @@ async def main() -> None:
                 if bench_done:
                     break
 
-                if now >= deadline:
+                if not warning and now >= deadline:
                     if not bench_done:
-                        raise TimeoutError(f"Timed out waiting for benchmark completion on socket {src_sock}.")
+                        print(f"Timed out waiting for benchmark completion on socket {src_sock}.\nTerminate this process manually if this is unexpected.")
+                    warning = True
 
                 time.sleep(0.1)
 
@@ -282,7 +367,9 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
-            await cleanup(src, src_log)
+            await cleanup(src, src_vm, src_log, src2, src_vm2, src2_log) # type: ignore
+    print(f"Total time elapsed: {time.monotonic()-t_0}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
