@@ -10,6 +10,7 @@ import argparse
 import asyncio
 from qemu.qmp import QMPClient
 import psutil
+import re
 from typing import Any, cast
 from typing import Optional, TextIO
 
@@ -27,15 +28,16 @@ class Config:
     mem_gb: int
     cores: int
     cpu: str
+    stop_copy: int
     record_count: int
     operation_count: int
     threads: int
-    write: int
-    read: int
-    upd: int
-    ins: int
-    rm: int
-    scan: int
+    write_proportion: float
+    read_proportion: float
+    update_proportion: float
+    insert_proportion: float
+    readmodification_proportion: float
+    scan_proportion: float
     sleep_timer: float
     additional_args: Optional[str] = None
 
@@ -58,16 +60,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mem-gb", type=int, default=4, help="Guest memory size in GiB")
     parser.add_argument("--cores", type=int, default=4, help="Amount of virtual CPU cores allocated to VM.")
     parser.add_argument("--cpu", type=str, default="host", help="Configure VM CPU model. host for host-passthrough.")
+    parser.add_argument("--stop-copy", type=bool, default=False, help="Enables stop-and-copy migration mode for immediate downtime.")
     # TODO maxmem etc. for potential migration target upgrade. Should be condition like incoming-uri in start_vm
     parser.add_argument("--record-count", type=int, default=2500000, help="Record count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--operation-count", type=int, default=1000000, help="Operation count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--threads", type=int, default=1, help="Thread count for PostgreSQL benchmark multithreading.")
-    parser.add_argument("--write-proportion", type=int, default=1, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--read-proportion", type=int, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--update-proportion", type=int, default=0, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
-    parser.add_argument("--insert-proportion", type=int, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--readmodification-proportion", type=int, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--scan-proportion", type=int, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--write-proportion", type=float, default=0, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--read-proportion", type=float, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--update-proportion", type=float, default=1, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
+    parser.add_argument("--insert-proportion", type=float, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--readmodification-proportion", type=float, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--scan-proportion", type=float, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and migration start in seconds")
     parser.add_argument("--additional-args", type=str, default=None, help="Additional QEMU command line arguments (i.e. for postcopy or CPU setup)")
     return parser
@@ -107,6 +110,7 @@ def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float
            "-o", "StrictHostKeyChecking=no", 
            "-o", "UserKnownHostsFile=/dev/null",
            "-o", "ConnectTimeout=1",
+           "-o", "LogLevel=ERROR",
            "-p", str(port),
            "-i", str(key),
            f"{user}@127.0.0.1",
@@ -181,9 +185,17 @@ class VMMonitor:
         if args is None:
             args = {}
         self.qmp_log.write(f"QMP cmd [{self.name}] {name} args={args}\n")
-        reply = cast(dict[str, Any], await self.qmp.execute(name, arguments=args))
-        self.qmp_log.write(f"QMP reply [{self.name}] {name}: {reply}\n")
-        return reply
+        try:
+            reply = cast(dict[str, Any], await self.qmp.execute(name, arguments=args))
+            self.qmp_log.write(f"QMP reply [{self.name}] {name}: {reply}\n")
+            return reply
+        except Exception as e:
+            self.qmp_log.write(f"QMP error [{self.name}] {name}: {e}\n")
+            self.qmp_log.flush()
+            # Mark as disconnected if we get a state error
+            if "disconnected" in str(e).lower() or "StateError" in str(type(e).__name__):
+                self.connected = False
+            raise
 
     async def wait_for_qmp(self, proc: subprocess.Popen, timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -198,12 +210,15 @@ class VMMonitor:
                 error = e
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
+            time.sleep(0.1)
     
     async def query_migrate(self): return await self.cmd("query-migrate")
     
     async def migrate(self, uri): 
         await self.cmd("migrate-set-capabilities", {"capabilities": [{"capability": "auto-converge", "state": False}]}) # TODO max-bandwidth ...
         return await self.cmd("migrate", {"uri":uri})
+    
+    async def stop(self): return await self.cmd("stop")
     
     async def quit(self): 
         # Forces shutdown, will trigger postgres WAL recovery
@@ -227,6 +242,31 @@ async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_
         src_log.close()
     if dst_log and not dst_log.closed:
         dst_log.close()
+
+STATUS_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}) "
+    r"(?P<elapsed>\d+) sec: "
+    r"(?P<ops>\d+) operations; "
+    r"(?P<ops_per_sec>[0-9.]+) current ops/sec;"
+)
+
+def ycsb_status_to_csv(log_path: Path, csv_path: Path) -> None:
+    with log_path.open("r", encoding="utf-8", errors="replace") as infile, \
+         csv_path.open("w", newline="", encoding="utf-8") as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(["timestamp", "elapsed_sec", "total_operations", "current_ops_per_sec"])
+
+        for line in infile:
+            m = STATUS_RE.match(line.strip())
+            if not m:
+                continue
+
+            writer.writerow([
+                m.group("timestamp"),
+                int(m.group("elapsed")),
+                int(m.group("ops")),
+                float(m.group("ops_per_sec")),
+            ])
 
 async def main() -> None:
     config = Config(**vars(build_parser().parse_args()))
@@ -259,6 +299,10 @@ async def main() -> None:
         create_overlay_image(base=config.image, overlay=overlay)
         t_start = time.monotonic()
         print(f"Time elapsed: {t_start - t_0}")
+
+        src_vm = subprocess.Popen(["true"])
+        dst_vm = subprocess.Popen(["true"])
+
         try:
             src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
             dst_vm = start_vm(overlay=overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, incoming_uri="unix:/tmp/mig.sock")
@@ -278,7 +322,7 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=2 -p readproportion={config.read} -p updateproportion={config.upd} -p insertproportion={config.ins} -p scanproportion={config.scan} -p readmodifywriteproportion={config.rm}"
+            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=0.5 -p writeproportion={config.write_proportion} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
             ssh_command(user=config.guest_user, 
                         port=src_port, 
                         key=config.ssh_key,
@@ -291,6 +335,8 @@ async def main() -> None:
             time.sleep (config.sleep_timer)
 
             # Start migration via QMP and measure time
+            if config.stop_copy:
+                await src.stop()
             await src.migrate("unix:/tmp/mig.sock")
             t_migration_started = time.monotonic()
 
@@ -361,10 +407,12 @@ async def main() -> None:
                     t_bench_completed - t_start
                 ])
 
+            ycsb_status_to_csv(log_path=config.log_path/f"bench-run-{run}", csv_path=config.log_path/f"bench-run-{run}.csv")
+
         except Exception as e:
             raise e
         finally:
-            await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log) # type: ignore
+            await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log) # type: ignor
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 
 if __name__ == "__main__":

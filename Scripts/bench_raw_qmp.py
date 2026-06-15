@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 from pathlib import Path
 import csv
-import json
 import subprocess
 import time
 import argparse
 import asyncio
 from qemu.qmp import QMPClient
 import psutil
+import re
 from typing import Any, cast
 from typing import Optional, TextIO
 
@@ -18,6 +18,7 @@ class Config:
     image: Path
     overlay: Path
     restart: bool
+    prepare_restart: bool
     runs: int
     log_path: Path
     src_port_base: int
@@ -31,12 +32,12 @@ class Config:
     record_count: int
     operation_count: int
     threads: int
-    write: int
-    read: int
-    upd: int
-    ins: int
-    rm: int
-    scan: int
+    write_proportion: float
+    read_proportion: float
+    update_proportion: float
+    insert_proportion: float
+    readmodification_proportion: float
+    scan_proportion: float
     sleep_timer: float
     additional_args: Optional[str] = None
 
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     # TODO Put overlay images fixed /var/tmp or something
     parser.add_argument("overlay", type=Path, help="Path where overlay images will be stored.")
     parser.add_argument("--restart", type=bool, default=False, help="Toggle restarting the VM during benchmark.")
+    parser.add_argument("--prepare-restart", type=bool, default=True, help="Prepare the destination VM for switchover instead of shutting 1 down and only then booting 2. Beware of extra boot time immediately after sleep if enabled.")
     parser.add_argument("--runs", type=int, default=10, help="Number of benchmark runs (default: 10)")
     parser.add_argument("--log-path", type=Path, default=Path("./logs"), help="Path to log files")
     parser.add_argument("--src-port-base", type=int, default=2222, help="Base host SSH port for source VM")
@@ -63,13 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--record-count", type=int, default=100000, help="Record count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--operation-count", type=int, default=100000, help="Operation count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--threads", type=int, default=1, help="Thread count for PostgreSQL benchmark multithreading.")
-    parser.add_argument("--write-proportion", type=int, default=1, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--read-proportion", type=int, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--update-proportion", type=int, default=0, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
-    parser.add_argument("--insert-proportion", type=int, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--readmodification-proportion", type=int, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
-    parser.add_argument("--scan-proportion", type=int, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
-
+    parser.add_argument("--write-proportion", type=float, default=1, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--read-proportion", type=float, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--update-proportion", type=float, default=0, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
+    parser.add_argument("--insert-proportion", type=float, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--readmodification-proportion", type=float, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--scan-proportion", type=float, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and restart in seconds")
     parser.add_argument("--additional-args", type=str, default=None, help="Additional QEMU command line arguments (i.e. for postcopy or CPU setup)")
     return parser
@@ -109,6 +110,7 @@ def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float
            "-o", "StrictHostKeyChecking=no", 
            "-o", "UserKnownHostsFile=/dev/null",
            "-o", "ConnectTimeout=1",
+           "-o", "LogLevel=ERROR",
            "-p", str(port),
            "-i", str(key),
            f"{user}@127.0.0.1",
@@ -200,12 +202,9 @@ class VMMonitor:
                 error = e
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Timed out waiting for QMP on {self.sock_path}: {error}")
+            time.sleep(0.1)
             
     async def powerdown(self): return await self.cmd("system_powerdown")
-    
-    # async def query_migrate(self): return await self.cmd("query-migrate")
-    
-    # async def migrate(self, uri): return await self.cmd("migrate", {"uri":uri})
     
     async def quit(self): 
         return await self.cmd("quit")
@@ -229,6 +228,31 @@ async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_
     if dst_log and not dst_log.closed:
         dst_log.close()
 
+STATUS_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}) "
+    r"(?P<elapsed>\d+) sec: "
+    r"(?P<ops>\d+) operations; "
+    r"(?P<ops_per_sec>[0-9.]+) current ops/sec;"
+)
+
+def ycsb_status_to_csv(log_path: Path, csv_path: Path) -> None:
+    with log_path.open("r", encoding="utf-8", errors="replace") as infile, \
+         csv_path.open("w", newline="", encoding="utf-8") as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(["timestamp", "elapsed_sec", "total_operations", "current_ops_per_sec"])
+
+        for line in infile:
+            m = STATUS_RE.match(line.strip())
+            if not m:
+                continue
+
+            writer.writerow([
+                m.group("timestamp"),
+                int(m.group("elapsed")),
+                int(m.group("ops")),
+                float(m.group("ops_per_sec")),
+            ])
+
 async def main() -> None:
     config = Config(**vars(build_parser().parse_args()))
     config.log_path.mkdir(parents=True, exist_ok=True)
@@ -236,7 +260,7 @@ async def main() -> None:
 
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "migration_start", "migration_end", "benchmark_end"])
+        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "benchmark_end", "shutdown_request", "shutdown_finished", "ssh2_ready", "postgres2_ready"])
         
     t_0 = time.monotonic()
 
@@ -251,6 +275,9 @@ async def main() -> None:
         src2 = VMMonitor(f"src{run}_reboot", src2_sock, src2_log)
         overlay = config.overlay / f"run{run}.qcow2"
         
+        src_vm = subprocess.Popen(["true"])
+        src_vm2 = subprocess.Popen(["true"])
+
         try:
             create_overlay_image(base=config.image, overlay=overlay)
             t_start = time.monotonic()
@@ -273,7 +300,7 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=2 -p readproportion={config.read} -p updateproportion={config.upd} -p insertproportion={config.ins} -p scanproportion={config.scan} -p readmodifywriteproportion={config.rm}"
+            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=0.5 -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
             ssh_command(user=config.guest_user, 
                         port=src_port, 
                         key=config.ssh_key,
@@ -283,10 +310,23 @@ async def main() -> None:
                         log_file=src_log)
             t_bench_started = time.monotonic()
             
+            t_ssh_ready = 0.0
+            t_shutdown_request = 0.0
+            t_power_off = 0.0
+            t_ssh2_ready = 0.0
+            t_pg2_ready = 0.0
+
+
             if(config.restart):
                 time.sleep(config.sleep_timer)  
+
+                if config.prepare_restart:
+                    src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                    await src2.wait_for_qmp(src_vm2, 20)
+                    wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
+                    t_ssh2_ready = time.monotonic()
+
                 t_shutdown_request = time.monotonic()
-                
                 ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="sudo -n systemctl poweroff", timeout=5.0, log_file=src_log)
                                 
                 try:
@@ -300,12 +340,12 @@ async def main() -> None:
                     await src.qmp.disconnect()
                     src.connected = False
                     
-                # maybe extra log:
-                src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
-                
-                await src2.wait_for_qmp(src_vm2, 20)
-                wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
-                t_ssh2_ready = time.monotonic()
+                if not config.prepare_restart:
+                    # maybe extra log:
+                    src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                    await src2.wait_for_qmp(src_vm2, 20)
+                    wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
+                    t_ssh2_ready = time.monotonic()
                 
                 wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
                 
@@ -352,6 +392,7 @@ async def main() -> None:
             find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
             scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}.json", log_file=src_log)
             
+            # TODO
             # Append results to CSV
             with open(config.out_csv, "a", newline="") as csvfile:
                 csv.writer(csvfile).writerow([
@@ -359,15 +400,19 @@ async def main() -> None:
                     t_ssh_ready - t_start, 
                     t_postgres_ready - t_start, 
                     t_bench_started - t_start,
-                    0, 
-                    0,
-                    t_bench_completed - t_start
+                    t_bench_completed - t_start,
+                    t_shutdown_request - t_start if config.restart else 0.0, 
+                    t_power_off - t_start if config.restart else 0.0,
+                    t_ssh2_ready - t_start if config.restart else 0.0,
+                    t_pg2_ready - t_start if config.restart else 0.0
                 ])
+
+            ycsb_status_to_csv(log_path=config.log_path/f"bench-run-{run}", csv_path=config.log_path/f"bench-run-{run}.csv")
 
         except Exception as e:
             raise e
         finally:
-            await cleanup(src, src_vm, src_log, src2, src_vm2, src2_log) # type: ignore
+            await cleanup(src, src_vm, src2, src_vm2, src_log, src2_log) # type: ignor
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 
 

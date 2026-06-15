@@ -23,7 +23,7 @@ for run in $(seq 1 "$RUNS"); do
 	rm -f "$qmp_sock" "$qemu_log"
 
 	qemu-img create -o "backing_file=$IMAGE,backing_fmt=qcow2" -f qcow2 "$overlay" > /dev/null 2>&1
-	break
+	
 	start_ns=$(date +%s%N)
 
 	qemu-system-x86_64 \
