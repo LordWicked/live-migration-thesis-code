@@ -71,7 +71,7 @@ restart_runner() {
     local logs="./logs_bigbench/$tag/" #${memory}G_2mil5-rec_${opcount}-ops_${sleep}-sleep_${threads}-thr
     mkdir -p "${logs}"
 
-    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprepare-VM2: ${prepare}\nprewarmed: ${prewarmed}" > "${logs}/${tag}_specs"
+    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprewarmed: ${prewarmed}" > "${logs}/${tag}_specs"  # prepare-VM2: ${prepare}\n
 
     ./bench_raw_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
