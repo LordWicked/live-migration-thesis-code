@@ -98,43 +98,43 @@ restart_runner() {
     # TODO something to prewarm (extra image?)
 }
 
-# # Raw # was 1000000
-# echo -e "raw:" && restart_runner "raw" 8 0 4 host 1000000 16 0 0 1 0 0 0 0 0  && echo       # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep, no restart
+# Raw # was 1000000
+echo -e "raw:" && restart_runner "raw" 8 0 4 host 1000000 16 0 0 1 0 0 0 0 0  && echo       # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep, no restart
 
-# # # Precopy 1: Bench faster than migration -> Migration finishes after bench
-# echo -e "pre_10:" && mig_runner "pre_10" 8 0 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
-# echo -e "pre_11:" && mig_runner "pre_11"     8 5 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
-# echo -e "pre_12:" && mig_runner "pre_12" 8 50 4 0 host 1000000 8 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
-# echo -e "pre_13:" && mig_runner "pre_13" 8 50 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
-# echo -e "pre_14:" && mig_runner "pre_14" 8 50 4 0 host 1000000 32 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 32 threads, 100% writes, 50 sec sleep
+# # Precopy 1: Bench faster than migration -> Migration finishes after bench
+echo -e "pre_10:" && mig_runner "pre_10" 8 0 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
+echo -e "pre_11:" && mig_runner "pre_11"     8 5 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
+echo -e "pre_12:" && mig_runner "pre_12" 8 50 4 0 host 1000000 8 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
+echo -e "pre_13:" && mig_runner "pre_13" 8 50 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
+echo -e "pre_14:" && mig_runner "pre_14" 8 50 4 0 host 1000000 32 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 32 threads, 100% writes, 50 sec sleep
 
-# # Precopy 2: Bench slower -> Migration happens quickly after call
-# echo -e "pre_20:" && mig_runner "pre_20" 8 0 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
-# echo -e "pre_21:" && mig_runner "pre_21" 8 5 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
-# echo -e "pre_22:" && mig_runner "pre_22" 8 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-# echo -e "pre_23:" && mig_runner "pre_23" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-# echo -e "pre_24:" && mig_runner "pre_24" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+# Precopy 2: Bench slower -> Migration happens quickly after call
+echo -e "pre_20:" && mig_runner "pre_20" 8 0 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
+echo -e "pre_21:" && mig_runner "pre_21" 8 5 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
+echo -e "pre_22:" && mig_runner "pre_22" 8 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+echo -e "pre_23:" && mig_runner "pre_23" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+echo -e "pre_24:" && mig_runner "pre_24" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
 
-# # Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy)
-# echo -e "pre_30:" && mig_runner "pre_30" 8 0 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 00 sec sleep
-# echo -e "pre_31:" && mig_runner "pre_31" 8 5 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 05 sec sleep
-# echo -e "pre_32:" && mig_runner "pre_32" 8 50 4 1 host 100000 16 0 0 1 0 0 0 0 && echo      # 8GB, 50 ops, 16 threads, 100% writes, 50 sec sleep
+# Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy)
+echo -e "pre_30:" && mig_runner "pre_30" 8 0 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 00 sec sleep
+echo -e "pre_31:" && mig_runner "pre_31" 8 5 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 05 sec sleep
+echo -e "pre_32:" && mig_runner "pre_32" 8 50 4 1 host 100000 16 0 0 1 0 0 0 0 && echo      # 8GB, 50 ops, 16 threads, 100% writes, 50 sec sleep
 
 
-# Postcopy: 
-# echo -e "post_10:" && mig_runner "post_10" 8 0 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
-# echo -e "post_11:" && mig_runner "post_11" 8 5 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
-# echo -e "post_12:" && mig_runner "post_12" 8 50 4 2 host 1000000 8 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
-# echo -e "post_13:" && mig_runner "post_13" 8 50 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo   # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
+Postcopy: 
+echo -e "post_10:" && mig_runner "post_10" 8 0 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
+echo -e "post_11:" && mig_runner "post_11" 8 5 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
+echo -e "post_12:" && mig_runner "post_12" 8 50 4 2 host 1000000 8 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
+echo -e "post_13:" && mig_runner "post_13" 8 50 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo   # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
 
-# echo -e "post_20:" && mig_runner "post_20" 8 0 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
-# echo -e "post_21:" && mig_runner "post_21" 8 5 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
-# echo -e "post_22:" && mig_runner "post_22" 8 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-# echo -e "post_23:" && mig_runner "post_23" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-# echo -e "post_24:" && mig_runner "post_24" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+echo -e "post_20:" && mig_runner "post_20" 8 0 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
+echo -e "post_21:" && mig_runner "post_21" 8 5 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
+echo -e "post_22:" && mig_runner "post_22" 8 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+echo -e "post_23:" && mig_runner "post_23" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+echo -e "post_24:" && mig_runner "post_24" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
 
-# # Restart 1: Clean shutdown during benchmark (11:cold 12:prewarmed)
-# echo -e "restart_raw:" && restart_runner "restart_raw" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 0 && echo  # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
+# Restart 1: Clean shutdown during benchmark (11:cold 12:prewarmed)
+echo -e "restart_raw:" && restart_runner "restart_raw" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 0 && echo  # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
 echo -e "restart_prewarmed:" && restart_runner "restart_prewarmed" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 1 && echo   # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep, prewarmed
 
 # # Maybe not easily doable:
