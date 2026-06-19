@@ -28,18 +28,18 @@ class Config:
     mem_gb: int
     cores: int
     cpu: str
-    stop_copy: int
+    migration_mode: int
     record_count: int
     operation_count: int
     threads: int
-    write_proportion: float
+    write_proportion_dep: float
     read_proportion: float
     update_proportion: float
     insert_proportion: float
     readmodification_proportion: float
     scan_proportion: float
     sleep_timer: float
-    additional_args: Optional[str] = None
+    auto_converge: int
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,19 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mem-gb", type=int, default=4, help="Guest memory size in GiB")
     parser.add_argument("--cores", type=int, default=4, help="Amount of virtual CPU cores allocated to VM.")
     parser.add_argument("--cpu", type=str, default="host", help="Configure VM CPU model. host for host-passthrough.")
-    parser.add_argument("--stop-copy", type=bool, default=False, help="Enables stop-and-copy migration mode for immediate downtime.")
+    parser.add_argument("--migration-mode", type=int, default=0, help="Sets migration mode. 0: precopy (default), 1: stop-copy, 2: postcopy")
     # TODO maxmem etc. for potential migration target upgrade. Should be condition like incoming-uri in start_vm
     parser.add_argument("--record-count", type=int, default=2500000, help="Record count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--operation-count", type=int, default=1000000, help="Operation count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--threads", type=int, default=1, help="Thread count for PostgreSQL benchmark multithreading.")
-    parser.add_argument("--write-proportion", type=float, default=0, help="Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
+    parser.add_argument("--write-proportion-dep", type=float, default=0, help="Not compatible with YCSB-A, will fail. Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--read-proportion", type=float, default=0, help="Proportion of read operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--update-proportion", type=float, default=1, help="Proportion of update operations for PostgreSQL YCSB benchmark. Default = 1")
     parser.add_argument("--insert-proportion", type=float, default=0, help="Proportion of insert operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--readmodification-proportion", type=float, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--scan-proportion", type=float, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and migration start in seconds")
-    parser.add_argument("--additional-args", type=str, default=None, help="Additional QEMU command line arguments (i.e. for postcopy or CPU setup)")
+    parser.add_argument("--auto-converge", type=int, default=0, help="Sets auto-converge. 0: off (default), 1: on") # TODO options for post- / precopy
+    # parser.add_argument("")
     return parser
 
 def create_overlay_image(base: Path, overlay: Path) -> None:
@@ -163,6 +164,20 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         timeout=timeout,
     )
 
+def start_pg_buffer_sampler(user: str, port: int, key: Path, log_file: TextIO) -> subprocess.CompletedProcess[str]:
+    return ssh_command(
+        user=user,
+        port=port,
+        key=key,
+        remote_cmd=(
+            "rm -f /tmp/bench.done /tmp/pg-buffer-hit-ratio.csv /tmp/pg-buffer-sampler.log; "
+            "nohup bash /home/user/pg_sampler.sh /tmp/bench.done /tmp/pg-buffer-hit-ratio.csv ycsb "
+            ">/tmp/pg-buffer-sampler.log 2>&1 &"
+        ),
+        timeout=10.0,
+        log_file=log_file,
+    )
+
 class VMMonitor:
     def __init__(self, name, sock_path: Path, qmp_log: TextIO):
         self.name = name
@@ -214,34 +229,70 @@ class VMMonitor:
     
     async def query_migrate(self): return await self.cmd("query-migrate")
     
-    async def migrate(self, uri): 
-        await self.cmd("migrate-set-capabilities", {"capabilities": [{"capability": "auto-converge", "state": False}]}) # TODO max-bandwidth ...
+    async def migrate(self, uri, mode, converge): 
+        """Mode: 0 = precopy | 1 = postcopy"""
+        await self.cmd("migrate-set-capabilities", 
+                       {"capabilities": [{"capability": "auto-converge", "state": converge != 0}, 
+                                         {"capability": "events", "state": True}, 
+                                         {"capability": "postcopy-ram", "state": mode == 1}]})
         return await self.cmd("migrate", {"uri":uri})
     
     async def stop(self): return await self.cmd("stop")
+
+    async def cont(self): return await self.cmd("cont")
     
     async def quit(self): 
         # Forces shutdown, will trigger postgres WAL recovery
         return await self.cmd("quit")
     
-async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_vm: subprocess.Popen, src_log: TextIO, dst_log: TextIO) -> None:
-    await dst.close()
-    await src.close()
+    async def wait_for_migration_completed(self) -> None:
+        async for event in self.qmp.events:
+            if event.get("event") == "MIGRATION":
+                data = cast(dict[str, Any], event.get("data", {}))
+                if data.get("status") == "completed":
+                    return
+                if data.get("status") == "failed":
+                    raise RuntimeError("Migration failed according to QMP event")
+                
+async def close_monitor(monitor: VMMonitor):
     try:
-        await asyncio.to_thread(src_vm.wait, timeout=20.0)
-        await asyncio.to_thread(dst_vm.wait, timeout=20.0)
+        await monitor.close()
+    except Exception as e:
+        monitor.qmp_log.write(f"QMP close for monitor [{monitor.name}] failed with: {e}\n")      
+        monitor.qmp_log.flush()
+
+async def stop_vm_proc(proc: subprocess.Popen, name: str, log_file: TextIO):
+    if proc.poll() is not None: return
+    try:
+        await asyncio.to_thread(proc.wait, timeout=10.0)
+        return
     except subprocess.TimeoutExpired:
-        src_vm.kill()
-        dst_vm.kill()
-        await asyncio.to_thread(src_vm.wait)
-        await asyncio.to_thread(dst_vm.wait)
+        log_file.write(f"Cleanup terminating {name} pid={proc.pid}\n")
+        log_file.flush()
 
-    # Path("/tmp/mig.sock").unlink()
+    proc.terminate()
+    try:
+        await asyncio.to_thread(proc.wait, timeout=10.0)
+        return
+    except subprocess.TimeoutExpired:
+        log_file.write(f"Cleanup killing {name} pid={proc.pid}\n")
+        log_file.flush()
 
-    if src_log and not src_log.closed:
-        src_log.close()
-    if dst_log and not dst_log.closed:
-        dst_log.close()
+    proc.kill()
+    await asyncio.to_thread(proc.wait)
+
+
+async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_vm: subprocess.Popen, src_log: TextIO, dst_log: TextIO) -> None:
+    try: 
+        await close_monitor(src)
+        await close_monitor(dst)
+        await stop_vm_proc(src_vm, src.name, src_log)
+        await stop_vm_proc(dst_vm, dst.name, dst_log)
+    finally:
+        if src_log and not src_log.closed:
+            src_log.close()
+        if dst_log and not dst_log.closed:
+            dst_log.close()
 
 STATUS_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}) "
@@ -250,22 +301,47 @@ STATUS_RE = re.compile(
     r"(?P<ops_per_sec>[0-9.]+) current ops/sec;"
 )
 
+LATENCY_RE = re.compile(r"\[[A-Z-]+: ([^\]]+)\]")
+
 def ycsb_status_to_csv(log_path: Path, csv_path: Path) -> None:
     with log_path.open("r", encoding="utf-8", errors="replace") as infile, \
          csv_path.open("w", newline="", encoding="utf-8") as outfile:
         writer = csv.writer(outfile)
-        writer.writerow(["timestamp", "elapsed_sec", "total_operations", "current_ops_per_sec"])
+        writer.writerow(["timestamp", "elapsed_sec", "total_operations", "current_ops_per_sec", "avg_latency_us", "max_latency_us",
+    "p99_latency_us", "p999_latency_us", "p9999_latency_us"])
 
         for line in infile:
             m = STATUS_RE.match(line.strip())
             if not m:
                 continue
 
+            counts = 0
+            avg_total = 0.0
+            max_latency = p99 = p999 = p9999 = ""
+
+            for stats_text in LATENCY_RE.findall(line):
+                stats = dict(item.split("=", 1) for item in stats_text.split(", "))
+                count = int(stats.get("Count", 0))
+                if not count:
+                    continue
+
+                counts += count
+                avg_total += count * float(stats.get("Avg", 0))
+                max_latency = max(int(max_latency or 0), int(stats.get("Max", 0)))
+                p99 = max(int(p99 or 0), int(stats.get("99", 0)))
+                p999 = max(int(p999 or 0), int(stats.get("99.9", 0)))
+                p9999 = max(int(p9999 or 0), int(stats.get("99.99", 0)))
+
             writer.writerow([
                 m.group("timestamp"),
                 int(m.group("elapsed")),
                 int(m.group("ops")),
                 float(m.group("ops_per_sec")),
+                (avg_total / counts) if counts else "",
+                max_latency,
+                p99,
+                p999,
+                p9999,
             ])
 
 async def main() -> None:
@@ -285,6 +361,8 @@ async def main() -> None:
         dst_port = config.dst_port_base + run - 1
         src_sock = Path(f"/tmp/src-pgvm-qmp-{run}.sock")
         dst_sock = Path(f"/tmp/dst-pgvm-qmp-{run}.sock")
+        if src_sock.exists(): src_sock.unlink()
+        if dst_sock.exists(): dst_sock.unlink()
         slog_path = config.log_path/f"src-run-{run}.log"
         dlog_path = config.log_path/f"dst-run-{run}.log"
         if slog_path.exists(): slog_path.unlink()
@@ -322,30 +400,47 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=0.5 -p writeproportion={config.write_proportion} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            start_pg_buffer_sampler(user=config.guest_user, port=src_port, key=config.ssh_key, log_file=src_log)
             ssh_command(user=config.guest_user, 
                         port=src_port, 
                         key=config.ssh_key,
                         remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
-                        log_file=dst_log) # TODO Correct log?
+                        log_file=dst_log)
             t_bench_started = time.monotonic()
 
             time.sleep (config.sleep_timer)
 
             # Start migration via QMP and measure time
-            if config.stop_copy:
+            if config.migration_mode == 1:
+                migration_done_task = asyncio.create_task(src.wait_for_migration_completed())
                 await src.stop()
-            await src.migrate("unix:/tmp/mig.sock")
-            t_migration_started = time.monotonic()
+                t_migration_started = time.monotonic()
+                await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
+                await migration_done_task
+                await dst.cont()
+                migration_done = True
+                t_migration_completed = time.monotonic()
+            elif config.migration_mode == 2:
+                migration_done = False
+                await dst.cmd("migrate-set-capabilities", 
+                       {"capabilities": [{"capability": "postcopy-ram", "state": True}]})
+                await src.migrate("unix:/tmp/mig.sock", True, config.auto_converge)
+                t_migration_started = time.monotonic()
+                t_migration_completed = 0.0
+            else:
+                migration_done = False
+                await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
+                t_migration_started = time.monotonic()
+                t_migration_completed = 0.0
 
+                
             # Wait for migration and benchmark to finish
             json_data = []
             deadline = time.monotonic() + 300.0
-            migration_done = False
             bench_done = False
-            t_migration_completed = 0.0
             t_bench_completed = 0.0
             warning = False
             while True:
@@ -387,9 +482,10 @@ async def main() -> None:
                         print(f"Timed out waiting for benchmark completion on socket {dst_sock}.\nTerminate this process manually if this is unexpected.")
                     warning = True
 
-                time.sleep(0.2)
+                time.sleep(0.1)
 
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}", log_file=dst_log)
+            scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-pgstats.csv", log_file=dst_log)
             
             find_pg_log = ssh_command(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=dst_log)
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}.json", log_file=dst_log)
