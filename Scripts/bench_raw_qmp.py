@@ -17,8 +17,10 @@ from typing import Optional, TextIO
 class Config:
     image: Path
     overlay: Path
+    socket_naming: str
     restart: int
     prepare_restart: int
+    standby_image: Path
     prewarm: int
     prewarm_image: Path
     runs: int
@@ -52,10 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("image", type=Path, help="Base qcow2 image")
     # TODO Put overlay images fixed /var/tmp or something
     parser.add_argument("overlay", type=Path, help="Path where overlay images will be stored.")
+    parser.add_argument("--socket-naming", type=str, default='', help="Add prefix to socket naming to avoid contention.")
     parser.add_argument("--restart", type=int, default=0, help="Toggle restarting the VM during benchmark. Default=0")
     parser.add_argument("--prepare-restart", type=int, default=0, help="Prepare the destination VM for switchover instead of shutting 1 down and only then booting 2. Beware of extra boot time immediately after sleep if enabled. Default=0")
+    parser.add_argument("--standby-image", type=Path, default=None, help="Standby image for the prepared restart destination.")
     parser.add_argument("--prewarm", type=int, default=0, help="Prepare the destination with warm RAM state from source. Default=0")
-    parser.add_argument("--prewarm-image", type=Path, default=None, help="Base prewarm image. Needed if using prewarm.")
+    parser.add_argument("--prewarm-image", type=Path, default=None, help="Base prewarmed or streaming (for prepared restart) image. Needed if using prewarm.")
     parser.add_argument("--runs", type=int, default=10, help="Number of benchmark runs (default: 10)")
     parser.add_argument("--log-path", type=Path, default=Path("./logs"), help="Path to log files")
     parser.add_argument("--src-port-base", type=int, default=2222, help="Base host SSH port for source VM")
@@ -88,14 +92,14 @@ def create_overlay_image(base: Path, overlay: Path) -> None:
     ], check=True)
 
 def start_vm(overlay: Path, ssh_port: int, qmp_sock: Path, 
-             log_file: TextIO, mem_gb: int, cores: int, cpu: str, incoming_uri: Optional[str] = None, additional_args: Optional[str] = None) -> subprocess.Popen:
+             log_file: TextIO, mem_gb: int, cores: int, cpu: str, source: Optional[bool] = False, incoming_uri: Optional[str] = None, additional_args: Optional[str] = None) -> subprocess.Popen:
     cmd = ["qemu-system-x86_64",
            "-accel", "kvm",
            "-m", f"{mem_gb}G",
            "-smp", f"{cores}",
            "-cpu", f"{cpu}",
            "-drive", f"file={overlay},if=virtio,format=qcow2",
-           "-nic", f"user,hostfwd=tcp:127.0.0.1:{ssh_port}-:22",
+           "-nic", f"user,hostfwd=tcp:127.0.0.1:{ssh_port}-:22{",hostfwd=tcp:127.0.0.1:5433-:5432" if source else ""}",
            "-qmp", f"unix:{qmp_sock},server=on,wait=off",
            "-display", "none"
            ]
@@ -195,9 +199,10 @@ class VMMonitor:
 
     async def close(self):
         if self.connected:
-            await self.quit()
-            await self.qmp.disconnect()
-            self.connected = False
+            try:
+                await self.qmp.disconnect()
+            finally:
+                self.connected = False
 
     async def cmd(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         if args is None:
@@ -324,34 +329,40 @@ async def main() -> None:
 
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "benchmark_end", "shutdown_request", "shutdown_finished", "ssh2_ready", "postgres2_ready"])
+        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "promotion_start", "benchmark_end", "shutdown_request", "shutdown_finished", "ssh2_ready", "postgres2_ready"])
         
     t_0 = time.monotonic()
 
     for run in range (1, config.runs + 1):
         print(f"Run {run}/{config.runs}")
         src_port = config.src_port_base + run - 1
-        src_sock = Path(f"/tmp/src-pgvm-qmp-{run}.sock")
-        src2_sock = Path(f"/tmp/src-pgvm-qmp-reboot-{run}.sock")
+        dst_port = config.dst_port_base + run - 1
+        src_sock = Path(f"/tmp/{config.socket_naming}src-pgvm-qmp-{run}.sock")
+        dst_sock = Path(f"/tmp/{config.socket_naming}src-pgvm-qmp-reboot-{run}.sock")
         if src_sock.exists(): src_sock.unlink()
-        if src2_sock.exists(): src2_sock.unlink()
+        if dst_sock.exists(): dst_sock.unlink()
         src_log = open(config.log_path/f"src-run-{run}.log", "a")
-        src2_log = open(config.log_path/f"src-run-{run}-reboot.log", "a")
+        dst_log = open(config.log_path/f"src-run-{run}-reboot.log", "a")
         src = VMMonitor(f"src{run}", src_sock, src_log)
-        src2 = VMMonitor(f"src{run}_reboot", src2_sock, src2_log)
-        overlay = config.overlay / f"run{run}.qcow2"
+        dst = VMMonitor(f"src{run}_reboot", dst_sock, dst_log)
+        overlay = config.overlay / f"{config.socket_naming}run{run}.qcow2"
+        dst_overlay = config.overlay / f"{config.socket_naming}dst_run{run}.qcow2"
         
         src_vm = subprocess.Popen(["true"])
-        src_vm2 = subprocess.Popen(["true"])
+        dst_vm = subprocess.Popen(["true"])
 
         try:
             if config.prewarm == 0: create_overlay_image(base=config.image, overlay=overlay)
             else: create_overlay_image(base=config.prewarm_image, overlay=overlay)
+            if config.prepare_restart == 1: 
+                if config.standby_image is None:
+                    raise ValueError("--standby-image is required with --prepare-restart 1")
+                create_overlay_image(base=config.standby_image, overlay=dst_overlay)
             t_start = time.monotonic()
             print(f"Time elapsed: {t_start - t_0}")
 
             t_start = time.monotonic()
-            src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+            src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, source=True)
             
             await src.wait_for_qmp(src_vm, 20)
             
@@ -382,16 +393,20 @@ async def main() -> None:
             t_power_off = 0.0
             t_ssh2_ready = 0.0
             t_pg2_ready = 0.0
+            t_dst_warm_start = 0.0
+            t_promotion_start = 0.0
 
+            port_actual = dst_port if config.prepare_restart else src_port
+            
+            if config.prepare_restart:
+                dst_vm = start_vm(overlay=dst_overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                await dst.wait_for_qmp(dst_vm, 20)
+                wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
+            t_ssh2_ready = time.monotonic()
 
             if(config.restart):
                 time.sleep(config.sleep_timer)  
 
-                if config.prepare_restart: #handle prewarm?
-                    src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
-                    await src2.wait_for_qmp(src_vm2, 20)
-                    wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
-                t_ssh2_ready = time.monotonic()
                 
                 scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-preshut", log_file=src_log)
                 scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.csv", log_file=src_log)
@@ -399,15 +414,50 @@ async def main() -> None:
                 find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
                 scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}-preshut.json", log_file=src_log)
 
-                if config.prewarm:
+                # TODO measure t_pg2_ready for prepared?
+
+                if config.prewarm and not config.prepare_restart:
                     ssh_command(
                         user=config.guest_user, port=src_port, key=config.ssh_key,
                         remote_cmd="sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c 'SELECT autoprewarm_dump_now();'",
                         timeout=30.0, log_file=src_log,
                     )
+                if config.prepare_restart:
+                    standby = ssh_command(
+                        user=config.guest_user,
+                        port=dst_port,
+                        key=config.ssh_key,
+                        remote_cmd="sudo -n -u postgres psql -d postgres -tA -c 'SELECT pg_is_in_recovery();'",
+                        timeout=10.0,
+                        log_file=dst_log,
+                    )
+
+                    if standby.stdout.strip() != "t":
+                        raise RuntimeError("Prepared restart destination is not a standby")
+
+                    # TODO check for wal lag or throughput so dest is warm
+
+                    t_promotion_start = time.monotonic()
+                    ssh_command(
+                        user=config.guest_user,
+                        port=dst_port,
+                        key=config.ssh_key,
+                        remote_cmd="sudo -n -u postgres psql -d postgres -c 'SELECT pg_promote(wait => true);'",
+                        timeout=60.0,
+                        log_file=dst_log,
+                    )
+
+                    wait_for_return(
+                        config.guest_user,
+                        dst_port,
+                        config.ssh_key,
+                        "sudo -n -u postgres psql -d postgres -tA -c 'SELECT NOT pg_is_in_recovery();' | grep -q t",
+                        60.0,
+                    )
+
+                    # t_promotion_finished = time.monotonic() (same as t_shutdown_request)
 
                 t_shutdown_request = time.monotonic()
-                # ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="sudo -n systemctl poweroff", timeout=5.0, log_file=src_log)
                 await src.powerdown()
 
                 try:
@@ -416,30 +466,27 @@ async def main() -> None:
                     raise TimeoutError("Guest did not shut down cleanly after system_powerdown.")
                 
                 t_power_off = time.monotonic()
-                
-                # if src.connected:
-                #     await src.qmp.disconnect()
-                #     src.connected = False
+
                     
                 if not config.prepare_restart:
-                    # maybe extra log:
-                    src_vm2 = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src2_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
-                    await src2.wait_for_qmp(src_vm2, 20)
+                    dst_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                    await dst.wait_for_qmp(dst_vm, 20)
                     wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
                     t_ssh2_ready = time.monotonic()
                 
-                wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
+
+                wait_for_return(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
                 
                 t_pg2_ready = time.monotonic()
                 
-                start_pg_buffer_sampler(user=config.guest_user, port=src_port, key=config.ssh_key, log_file=src_log)
+                start_pg_buffer_sampler(user=config.guest_user, port=port_actual, key=config.ssh_key, log_file=src_log)
                 ssh_command(user=config.guest_user, 
-                        port=src_port, 
+                        port=port_actual, 
                         key=config.ssh_key,
                         remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
-                        log_file=src_log) # maybe extra log
+                        log_file=src_log)
             
 
             # Wait for benchmark to finish
@@ -452,7 +499,7 @@ async def main() -> None:
                     
                 if not bench_done:
                     try:
-                        proc = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=src_log)
+                        proc = ssh_command(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=src_log)
                         if proc.returncode == 0:
                             bench_done = True
                             t_bench_completed = now
@@ -469,12 +516,12 @@ async def main() -> None:
 
                 time.sleep(0.1)
 
-            scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-final", log_file=src_log)
-            scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-final-pgstats.csv", log_file=src_log)
-            scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-sampler.log" ,local_path=config.log_path/f"bench-run-{run}-final-pgstats.log", log_file=src_log)
+            scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-final", log_file=src_log)
+            scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-final-pgstats.csv", log_file=src_log)
+            scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-sampler.log" ,local_path=config.log_path/f"bench-run-{run}-final-pgstats.log", log_file=src_log)
             
-            find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
-            scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}-final.json", log_file=src_log)
+            find_pg_log = ssh_command(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
+            scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}-final.json", log_file=src_log)
             
             # Append results to CSV
             with open(config.out_csv, "a", newline="") as csvfile:
@@ -483,6 +530,7 @@ async def main() -> None:
                     t_ssh_ready - t_start, 
                     t_postgres_ready - t_start, 
                     t_bench_started - t_start,
+                    t_promotion_start - t_start,
                     t_bench_completed - t_start,
                     t_shutdown_request - t_start if config.restart else 0.0, 
                     t_power_off - t_start if config.restart else 0.0,
@@ -497,7 +545,7 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
-            await cleanup(src, src_vm, src2, src_vm2, src_log, src2_log) # type: ignor
+            await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log)
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 
 

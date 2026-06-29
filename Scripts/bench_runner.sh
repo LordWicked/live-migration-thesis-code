@@ -1,6 +1,7 @@
 #!/usr/bin/bash
 
-RUNS=1
+RUNS=10
+DIRECTORY="logs_bigbench"
 
 mig_runner() {
     local tag=$1
@@ -21,7 +22,7 @@ mig_runner() {
     local scan=${14}
     local ac=${15}
 
-    local logs="./logs_bigbench/$tag/" #${memory}G_2mil5-rec_${opcount}-ops_${sleep}-sleep_ac${ac}_${threads}-thr # TODO acoff
+    local logs="./$DIRECTORY/$tag/"
     mkdir -p "${logs}"
 
     echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nmigration-mode (0: precopy, 1: stop-copy, 2: postcopy): ${mode}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nauto-converge: ${ac}" > "${logs}/${tag}_specs"
@@ -66,9 +67,9 @@ restart_runner() {
     local scan=${13}
     local restart=${14}
     local prewarmed=${15}
-    # local prepare=${16}
+    local prepare=${16}
 
-    local logs="./logs_bigbench/$tag/" #${memory}G_2mil5-rec_${opcount}-ops_${sleep}-sleep_${threads}-thr
+    local logs="./$DIRECTORY/$tag/"
     mkdir -p "${logs}"
 
     echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprewarmed: ${prewarmed}" > "${logs}/${tag}_specs"  # prepare-VM2: ${prepare}\n
@@ -76,7 +77,8 @@ restart_runner() {
     ./bench_raw_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
     /home/max/Bachelor-Thesis/VMs/postgresvm/bigbench \
-    --prewarm-image /home/max/Bachelor-Thesis/VMs/postgresvm/ \
+    --prewarm-image /home/max/Bachelor-Thesis/VMs/postgresvm/prewarm_base_flat.qcow2 \
+    --standby-image /home/max/Bachelor-Thesis/VMs/postgresvm/pgstream_base_flat.qcow2 \
     --log-path "${logs}" \
     --out-csv "${logs}/${tag}.csv" \
     --runs "${RUNS}" \
@@ -93,9 +95,8 @@ restart_runner() {
     --readmodification-proportion "${rm}" \
     --scan-proportion "${scan}" \
     --restart "${restart}" \
-    # --prepare-restart "${prepare}"
-
-    # TODO something to prewarm (extra image?)
+    --prepare-restart "${prepare}" \
+    --prewarm "${prewarmed}"
 }
 
 # Raw # was 1000000

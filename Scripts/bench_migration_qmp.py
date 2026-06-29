@@ -192,9 +192,10 @@ class VMMonitor:
 
     async def close(self):
         if self.connected:
-            await self.quit()
-            await self.qmp.disconnect()
-            self.connected = False
+            try:
+                await self.qmp.disconnect()
+            finally:
+                self.connected = False
 
     async def cmd(self, name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         if args is None:
@@ -242,7 +243,7 @@ class VMMonitor:
     async def cont(self): return await self.cmd("cont")
     
     async def quit(self): 
-        # Forces shutdown, will trigger postgres WAL recovery
+        """Forces shutdown, will trigger postgres WAL recovery"""
         return await self.cmd("quit")
     
     async def wait_for_migration_completed(self) -> None:
@@ -472,13 +473,10 @@ async def main() -> None:
 
                 if not warning and now >= deadline:
                     if bench_done and not migration_done:
-                        # raise TimeoutError(f"Timed out waiting for migration completion on socket {src_sock}.")
                         print(f"Timed out waiting for migration completion on socket {src_sock}.\nTerminate this process manually if this is unexpected.")
                     if not bench_done and not migration_done:
-                        # raise TimeoutError(f"Timed out waiting for migration and benchmark completion on socket {src_sock}.")
                         print(f"Timed out waiting for migration and benchmark completion on socket {src_sock}.\nTerminate this process manually if this is unexpected.")
                     if not bench_done and migration_done:
-                        # raise TimeoutError(f"Timed out waiting for benchmark completion on socket {dst_sock}.")
                         print(f"Timed out waiting for benchmark completion on socket {dst_sock}.\nTerminate this process manually if this is unexpected.")
                     warning = True
 
@@ -508,7 +506,7 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
-            await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log) # type: ignor
+            await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log)
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 
 if __name__ == "__main__":
