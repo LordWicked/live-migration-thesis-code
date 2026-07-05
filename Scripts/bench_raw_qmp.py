@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mem-gb", type=int, default=4, help="Guest memory size in GiB")
     parser.add_argument("--cores", type=int, default=4, help="Amount of virtual CPU cores allocated to VM.")
     parser.add_argument("--cpu", type=str, default="host", help="Configure VM CPU model. host for host-passthrough.")
-    parser.add_argument("--record-count", type=int, default=100000, help="Record count for the YCSB-A benchmark to be executed before migration.")
+    parser.add_argument("--record-count", type=int, default=2500000, help="Record count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--operation-count", type=int, default=100000, help="Operation count for the YCSB-A benchmark to be executed before migration.")
     parser.add_argument("--threads", type=int, default=1, help="Thread count for PostgreSQL benchmark multithreading.")
     parser.add_argument("--write-proportion-dep", type=float, default=0, help="Not compatible with YCSB-A, will fail. Proportion of write operations for PostgreSQL YCSB benchmark. Default = 0")
