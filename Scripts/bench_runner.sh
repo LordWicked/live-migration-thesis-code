@@ -1,7 +1,8 @@
 #!/usr/bin/bash
 
 RUNS=10
-DIRECTORY="logs_bigbench"
+DIRECTORY="logs_05_chungus"
+RECORDS=2500000
 
 mig_runner() {
     local tag=$1
@@ -27,17 +28,17 @@ mig_runner() {
 
     echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nmigration-mode (0: precopy, 1: stop-copy, 2: postcopy): ${mode}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nauto-converge: ${ac}" > "${logs}/${tag}_specs"
 
-    ./bench_migration_qmp.py \
+    /home/max/Bachelor-Thesis/Repo/.venv/bin/python ./bench_migration_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
     /home/max/Bachelor-Thesis/VMs/postgresvm/bigbench \
     --log-path "${logs}" \
     --out-csv "${logs}/${tag}.csv" \
-    --runs "${RUNS}" \
     --mem-gb "${memory}" \
     --cores "${cores}" \
     --cpu "${cpu}" \
     --migration-mode "${mode}" \
     --operation-count "${opcount}" \
+    --record-count "${RECORDS}" \
     --threads "${threads}" \
     --write-proportion "${write}" \
     --read-proportion "${read}" \
@@ -46,7 +47,9 @@ mig_runner() {
     --readmodification-proportion "${rm}" \
     --scan-proportion "${scan}" \
     --sleep-timer "${sleep}" \
-    --auto-converge "${ac}"
+    --auto-converge "${ac}" \
+    --runs "${RUNS}"
+    # --runs 1 
 }
 
 restart_runner() {
@@ -74,19 +77,19 @@ restart_runner() {
 
     echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprewarmed: ${prewarmed}" > "${logs}/${tag}_specs"  # prepare-VM2: ${prepare}\n
 
-    ./bench_raw_qmp.py \
+    /home/max/Bachelor-Thesis/Repo/.venv/bin/python ./bench_raw_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
     /home/max/Bachelor-Thesis/VMs/postgresvm/bigbench \
     --prewarm-image /home/max/Bachelor-Thesis/VMs/postgresvm/prewarm_base_flat.qcow2 \
     --standby-image /home/max/Bachelor-Thesis/VMs/postgresvm/pgstream_base_flat.qcow2 \
     --log-path "${logs}" \
     --out-csv "${logs}/${tag}.csv" \
-    --runs "${RUNS}" \
     --mem-gb "${memory}" \
     --sleep-timer "${sleep}" \
     --cores "${cores}" \
     --cpu "${cpu}" \
     --operation-count "${opcount}" \
+    --record-count "${RECORDS}" \
     --threads "${threads}" \
     --write-proportion "${write}" \
     --read-proportion "${read}" \
@@ -96,7 +99,9 @@ restart_runner() {
     --scan-proportion "${scan}" \
     --restart "${restart}" \
     --prepare-restart "${prepare}" \
-    --prewarm "${prewarmed}"
+    --prewarm "${prewarmed}" \
+    --runs "${RUNS}"
+    # --runs 1 
 }
 
 # Raw # was 1000000
