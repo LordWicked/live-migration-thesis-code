@@ -8,10 +8,12 @@ import time
 import argparse
 import asyncio
 from qemu.qmp import QMPClient
-import psutil
+import datetime
 import re
 from typing import Any, cast
 from typing import Optional, TextIO
+from host_resource_sampler import HostResourceSampler
+from event_logger import EventLogger
 
 @dataclass
 class Config:
@@ -125,7 +127,9 @@ def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float
            remote_cmd]
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
 
+    ct = datetime.datetime.now()
     if log_file is not None:
+        log_file.write(f"{ct}")
         log_file.write(f"SSH command: {' '.join(cmd)}\n")
         log_file.write(f"Return code: {proc.returncode}\n")
         log_file.write(f"Stdout: {proc.stdout}\n")
@@ -156,8 +160,10 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         str(local_path),
     ]
 
+    ct = datetime.datetime.now()
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     if log_file is not None:
+        log_file.write(f"{ct}")
         log_file.write(f"SSH command: {' '.join(cmd)}\n")
         log_file.write(f"Return code: {proc.returncode}\n")
         log_file.write(f"Stdout: {proc.stdout}\n")
@@ -259,7 +265,6 @@ async def stop_vm_proc(proc: subprocess.Popen, name: str, log_file: TextIO):
     proc.kill()
     await asyncio.to_thread(proc.wait)
 
-
 async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_vm: subprocess.Popen, src_log: TextIO, dst_log: TextIO) -> None:
     try: 
         await close_monitor(src)
@@ -348,8 +353,28 @@ async def main() -> None:
         overlay = config.overlay / f"{config.socket_naming}run{run}.qcow2"
         dst_overlay = config.overlay / f"{config.socket_naming}dst_run{run}.qcow2"
         
+        t_start = time.monotonic()
+
         src_vm = subprocess.Popen(["true"])
         dst_vm = subprocess.Popen(["true"])
+
+        host_sampler = HostResourceSampler(
+            csv_path=config.log_path/f"host-stats-run-{run}.csv",
+            run_start=t_start,
+            src_proc_getter=lambda: src_vm,
+            dst_proc_getter=lambda: dst_vm,
+        )
+        host_sampler.start()
+        event_logger = EventLogger(
+            csv_path=(
+                config.log_path
+                / f"events-run-{run}.csv"
+            ),
+            run_start=t_start,
+        )
+        event_logger.mark("run_start")
+
+        print(f"Time elapsed: {t_start - t_0}")
 
         try:
             if config.prewarm == 0: create_overlay_image(base=config.image, overlay=overlay)
@@ -358,22 +383,28 @@ async def main() -> None:
                 if config.standby_image is None:
                     raise ValueError("--standby-image is required with --prepare-restart 1")
                 create_overlay_image(base=config.standby_image, overlay=dst_overlay)
-            t_start = time.monotonic()
-            print(f"Time elapsed: {t_start - t_0}")
 
-            t_start = time.monotonic()
             src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, source=True)
             
+            event_logger.mark(
+                "source_vm_started",
+                f"pid={src_vm.pid}",
+            )
+
             await src.wait_for_qmp(src_vm, 20)
+
+            event_logger.mark("source_qmp_ready")
             
             # Wait for SSH and bench
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="true", timeout=60.0)
             t_ssh_ready = time.monotonic()
+            event_logger.mark("ssh_ready")
 
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=60.0)
             t_postgres_ready = time.monotonic()
+            event_logger.mark("postgres_ready")
             
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
@@ -387,7 +418,10 @@ async def main() -> None:
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
                         log_file=src_log)
+            event_logger.mark("source_benchmark_start")
             t_bench_started = time.monotonic()
+
+            event_logger.mark("benchmark_start")
             
             t_shutdown_request = 0.0
             t_power_off = 0.0
@@ -399,8 +433,14 @@ async def main() -> None:
             port_actual = dst_port if config.prepare_restart else src_port
             
             if config.prepare_restart:
+                event_logger.mark("destination_boot_start")
                 dst_vm = start_vm(overlay=dst_overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                event_logger.mark(
+                    "destination_process_started",
+                    f"pid={dst_vm.pid}",
+                )
                 await dst.wait_for_qmp(dst_vm, 20)
+                event_logger.mark("destination_qmp_ready")
                 wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
             t_ssh2_ready = time.monotonic()
 
@@ -446,6 +486,7 @@ async def main() -> None:
                         timeout=60.0,
                         log_file=dst_log,
                     )
+                    # t_promotion_finished = time.monotonic() (same as t_shutdown_request)
 
                     wait_for_return(
                         config.guest_user,
@@ -455,7 +496,6 @@ async def main() -> None:
                         60.0,
                     )
 
-                    # t_promotion_finished = time.monotonic() (same as t_shutdown_request)
 
                 t_shutdown_request = time.monotonic()
                 await src.powerdown()
@@ -469,14 +509,21 @@ async def main() -> None:
 
                     
                 if not config.prepare_restart:
+                    event_logger.mark("destination_boot_start")
                     dst_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                    event_logger.mark(
+                        "destination_process_started",
+                        f"pid={dst_vm.pid}",
+                    )
                     await dst.wait_for_qmp(dst_vm, 20)
+                    event_logger.mark("destination_qmp_ready")
                     wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
                     t_ssh2_ready = time.monotonic()
                 
 
                 wait_for_return(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
-                
+                event_logger.mark("destination_postgres_ready")
+
                 t_pg2_ready = time.monotonic()
                 
                 start_pg_buffer_sampler(user=config.guest_user, port=port_actual, key=config.ssh_key, log_file=src_log)
@@ -487,6 +534,7 @@ async def main() -> None:
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
                         log_file=src_log)
+                event_logger.mark("destination_benchmark_start")
             
 
             # Wait for benchmark to finish
@@ -501,6 +549,7 @@ async def main() -> None:
                     try:
                         proc = ssh_command(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=src_log)
                         if proc.returncode == 0:
+                            event_logger.mark("benchmark_end")
                             bench_done = True
                             t_bench_completed = now
                     except subprocess.TimeoutExpired:
@@ -545,6 +594,8 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
+            if host_sampler is not None: await host_sampler.stop()
+            if event_logger is not None: event_logger.close()
             await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log)
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 

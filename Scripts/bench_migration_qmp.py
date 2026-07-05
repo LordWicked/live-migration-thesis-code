@@ -9,16 +9,19 @@ import time
 import argparse
 import asyncio
 from qemu.qmp import QMPClient
-import psutil
+import datetime
 import re
 from typing import Any, cast
 from typing import Optional, TextIO
+from host_resource_sampler import HostResourceSampler
+from event_logger import EventLogger
 
 @dataclass
 class Config:
     image: Path
     overlay: Path
     runs: int
+    socket_path: Path
     log_path: Path
     src_port_base: int
     dst_port_base: int
@@ -51,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     # TODO Put overlay images fixed /var/tmp or something
     parser.add_argument("overlay", type=Path, help="Path where overlay images will be stored.")
     parser.add_argument("--runs", type=int, default=10, help="Number of benchmark runs (default: 10)")
+    parser.add_argument("--socket-path", type=Path, default=Path("/tmp/"), help="Change socket path. Default: /tmp/")
     parser.add_argument("--log-path", type=Path, default=Path("./logs"), help="Path to log files")
     parser.add_argument("--src-port-base", type=int, default=2222, help="Base host SSH port for source VM")
     parser.add_argument("--dst-port-base", type=int, default=4444, help="Base host SSH port for destination VM")
@@ -118,7 +122,9 @@ def ssh_command(user: str, port: int, key: Path, remote_cmd: str, timeout: float
            remote_cmd]
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
 
+    ct = datetime.datetime.now()
     if log_file is not None:
+        log_file.write(f"{ct}")
         log_file.write(f"SSH command: {' '.join(cmd)}\n")
         log_file.write(f"Return code: {proc.returncode}\n")
         log_file.write(f"Stdout: {proc.stdout}\n")
@@ -148,9 +154,10 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         f"{user}@127.0.0.1:{remote_path}",
         str(local_path),
     ]
-
+    ct = datetime.datetime.now()
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     if log_file is not None:
+        log_file.write(f"{ct}")
         log_file.write(f"SSH command: {' '.join(cmd)}\n")
         log_file.write(f"Return code: {proc.returncode}\n")
         log_file.write(f"Stdout: {proc.stdout}\n")
@@ -234,9 +241,13 @@ class VMMonitor:
         """Mode: 0 = precopy | 1 = postcopy"""
         await self.cmd("migrate-set-capabilities", 
                        {"capabilities": [{"capability": "auto-converge", "state": converge != 0}, 
-                                         {"capability": "events", "state": True}, 
+                                         {"capability": "events", "state": True}, #]})
                                          {"capability": "postcopy-ram", "state": mode == 1}]})
         return await self.cmd("migrate", {"uri":uri})
+        
+    async def postcopy_start(self):
+        return await self.cmd("migrate-start-postcopy")
+
     
     async def stop(self): return await self.cmd("stop")
 
@@ -281,7 +292,6 @@ async def stop_vm_proc(proc: subprocess.Popen, name: str, log_file: TextIO):
 
     proc.kill()
     await asyncio.to_thread(proc.wait)
-
 
 async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_vm: subprocess.Popen, src_log: TextIO, dst_log: TextIO) -> None:
     try: 
@@ -350,6 +360,10 @@ async def main() -> None:
     config.log_path.mkdir(parents=True, exist_ok=True)
     config.overlay.mkdir(parents=True, exist_ok=True)
 
+    BOOT_AT_START = False
+
+    # if (config.migration_mode == 2): config.socket_path = Path("/home/max/Bachelor-Thesis/VMs/postgresvm/sockets/")
+
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
         csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "migration_start", "migration_end", "benchmark_end"])
@@ -360,8 +374,8 @@ async def main() -> None:
         print(f"Run {run}/{config.runs}")
         src_port = config.src_port_base + run - 1
         dst_port = config.dst_port_base + run - 1
-        src_sock = Path(f"/tmp/src-pgvm-qmp-{run}.sock")
-        dst_sock = Path(f"/tmp/dst-pgvm-qmp-{run}.sock")
+        src_sock = Path(f"{config.socket_path}/src-pgvm-qmp-{run}.sock")
+        dst_sock = Path(f"{config.socket_path}/dst-pgvm-qmp-{run}.sock")
         if src_sock.exists(): src_sock.unlink()
         if dst_sock.exists(): dst_sock.unlink()
         slog_path = config.log_path/f"src-run-{run}.log"
@@ -376,27 +390,66 @@ async def main() -> None:
         overlay = config.overlay / f"run{run}.qcow2"
         
         create_overlay_image(base=config.image, overlay=overlay)
+
         t_start = time.monotonic()
-        print(f"Time elapsed: {t_start - t_0}")
 
         src_vm = subprocess.Popen(["true"])
         dst_vm = subprocess.Popen(["true"])
 
+        host_sampler = HostResourceSampler(
+            csv_path=config.log_path/f"host-stats-run-{run}.csv",
+            run_start=t_start,
+            src_proc_getter=lambda: src_vm,
+            dst_proc_getter=lambda: dst_vm,
+        )
+        event_logger = EventLogger(
+            csv_path=(
+                config.log_path
+                / f"events-run-{run}.csv"
+            ),
+            run_start=t_start,
+        )
+        event_logger.mark("run_start")
+        host_sampler.start()
+
+        print(f"Time elapsed: {t_start - t_0}")
+
+
         try:
+            t_destination_boot = 0.0
             src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
-            dst_vm = start_vm(overlay=overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, incoming_uri="unix:/tmp/mig.sock")
             
+            event_logger.mark(
+                "source_vm_started",
+                f"pid={src_vm.pid}",
+            )
+
             await src.wait_for_qmp(src_vm, 20)
-            await dst.wait_for_qmp(dst_vm, 20)
+
+            event_logger.mark("source_qmp_ready")
+        
+            if BOOT_AT_START:
+                t_destination_boot = time.monotonic()
+                event_logger.mark("destination_boot_start")
+                dst_vm = start_vm(overlay=overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, incoming_uri="unix:/tmp/mig.sock")
+                event_logger.mark(
+                    "destination_process_started",
+                    f"pid={dst_vm.pid}",
+                )
+                await dst.wait_for_qmp(dst_vm, 20)
+                event_logger.mark("destination_qmp_ready")
+            
             
             # Wait for SSH and bench
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="true", timeout=60.0)
             t_ssh_ready = time.monotonic()
+            event_logger.mark("source_ssh_ready")
 
             wait_for_return(user=config.guest_user, port=src_port, 
                             key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=60.0)
             t_postgres_ready = time.monotonic()
+            event_logger.mark("source_postgres_ready")
 
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
@@ -410,31 +463,56 @@ async def main() -> None:
                                     ">/tmp/bench.log 2>&1 &"), 
                         timeout=10.0,
                         log_file=dst_log)
+            event_logger.mark("benchmark_start")
             t_bench_started = time.monotonic()
 
             time.sleep (config.sleep_timer)
 
+            if not BOOT_AT_START:
+                t_destination_boot = time.monotonic()
+                event_logger.mark("destination_boot_start")
+                dst_vm = start_vm(overlay=overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, incoming_uri="unix:/tmp/mig.sock")
+                event_logger.mark(
+                    "destination_process_started",
+                    f"pid={dst_vm.pid}",
+                )
+                await dst.wait_for_qmp(dst_vm, 20)
+                event_logger.mark("destination_qmp_ready")
+
+            postcopy_started = False
             # Start migration via QMP and measure time
             if config.migration_mode == 1:
                 migration_done_task = asyncio.create_task(src.wait_for_migration_completed())
-                await src.stop()
                 t_migration_started = time.monotonic()
+                event_logger.mark("migration_start")
+                await src.stop()
                 await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
                 await migration_done_task
                 await dst.cont()
-                migration_done = True
+                migration_done = False # TODO if error enable again
                 t_migration_completed = time.monotonic()
             elif config.migration_mode == 2:
                 migration_done = False
                 await dst.cmd("migrate-set-capabilities", 
-                       {"capabilities": [{"capability": "postcopy-ram", "state": True}]})
-                await src.migrate("unix:/tmp/mig.sock", True, config.auto_converge)
+                       {"capabilities": [{"capability": "postcopy-ram", "state": True},
+                                        {"capability": "events", "state": True}]})
                 t_migration_started = time.monotonic()
+                event_logger.mark("migration_start")
+                await src.migrate("unix:/tmp/mig.sock", 1, config.auto_converge)
+                while True:
+                    mig = await src.query_migrate()
+                    if mig.get("status") == "active":
+                        break
+                    await asyncio.sleep(0.1)
+                await src.postcopy_start()
+                # await src.wait_for_migration_completed()
                 t_migration_completed = 0.0
+                postcopy_started = True
             else:
                 migration_done = False
                 await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
                 t_migration_started = time.monotonic()
+                event_logger.mark("migration_start")
                 t_migration_completed = 0.0
 
                 
@@ -444,25 +522,50 @@ async def main() -> None:
             bench_done = False
             t_bench_completed = 0.0
             warning = False
+            postcopy_active_logged = False
             while True:
                 now = time.monotonic()
 
                 if not migration_done:
                     mig = await src.query_migrate()
-                    json_data.append(mig)
-                    status = mig["status"]
+                    json_data.append({
+                        "t_monotonic": now,
+                        "t_since_run_start": now - t_start,
+                        "query_migrate": mig,
+                    })
+                    status = mig.get("status")
+                    if not postcopy_active_logged and status == 'postcopy-active': 
+                        event_logger.mark("postcopy_start_requested")
+                        postcopy_active_logged = True
                     if  status == "completed":
                         migration_done = True
+                        event_logger.mark("migration_end")
                         t_migration_completed = now
+                        try: 
+                            event_logger.mark(
+                                "source_terminate_requested",
+                                f"pid={src_vm.pid}",
+                            )
+                            src_vm.terminate()
+                            await close_monitor(src)
+                            await stop_vm_proc(src_vm, src.name, src_log)
+                            event_logger.mark(
+                                "source_terminated",
+                                f"pid={src_vm.pid}",
+                            )
+                        except subprocess.SubprocessError as e:
+                            raise e
                     elif status == "failed":
                         raise RuntimeError("Migration failed according to QMP")
                     
                 if not bench_done:
-                    port = dst_port if migration_done else src_port
-                    log = dst_log if migration_done else src_log
+                    guest_on_dst = migration_done or postcopy_started
+                    port = dst_port if guest_on_dst else src_port
+                    log = dst_log if guest_on_dst else src_log
                     try:
                         proc = ssh_command(user=config.guest_user, port=port, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=log)
                         if proc.returncode == 0:
+                            event_logger.mark("benchmark_end")
                             bench_done = True
                             t_bench_completed = now
                     except subprocess.TimeoutExpired:
@@ -496,6 +599,7 @@ async def main() -> None:
                     t_ssh_ready - t_start, 
                     t_postgres_ready - t_start, 
                     t_bench_started - t_start,
+                    t_destination_boot - t_start,
                     t_migration_started - t_start, 
                     t_migration_completed - t_start,
                     t_bench_completed - t_start
@@ -506,6 +610,8 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
+            if host_sampler is not None: await host_sampler.stop()
+            if event_logger is not None: event_logger.close()
             await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log)
     print(f"Total time elapsed: {time.monotonic()-t_0}")
 
