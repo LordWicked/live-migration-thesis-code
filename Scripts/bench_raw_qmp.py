@@ -10,6 +10,7 @@ import asyncio
 from qemu.qmp import QMPClient
 import datetime
 import re
+import shlex
 from typing import Any, cast
 from typing import Optional, TextIO
 from host_resource_sampler import HostResourceSampler
@@ -146,6 +147,26 @@ def wait_for_return(user: str, port: int, key: Path, remote_cmd: str, timeout: f
             raise TimeoutError(f"Timed out waiting for SSH on port {port}")
         time.sleep(0.1)
 
+def wait_for_standby(user: str, port: int, key: Path, log_file: TextIO, timeout: float = 60.0) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        result = ssh_command(user=user, port=port, key=key, 
+                             remote_cmd= ("sudo -n -u postgres "
+                                          "psql -d postgres -tA -c \""
+                                          "SELECT "
+                                          "pg_last_wal_receive_lsn() IS NOT NULL "
+                                          "AND pg_last_wal_replay_lsn() IS NOT NULL "
+                                          "AND pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn();"
+                                          "\""), 
+                            timeout=10.0, log_file=log_file)
+        if result.returncode == 0 and result.stdout.strip() == "t":
+            return
+        
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Standby did not finish replaying received WAL")
+        
+        time.sleep(0.1)
+
 def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, local_path: Path, timeout: float = 30.0, log_file: TextIO | None = None) -> subprocess.CompletedProcess[str]:
     local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -170,12 +191,7 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         log_file.write(f"Stderr: {proc.stderr}\n")
         log_file.flush()
 
-    return subprocess.run(
-        cmd,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-    )
+    return proc
 
 def start_pg_buffer_sampler(user: str, port: int, key: Path, log_file: TextIO) -> subprocess.CompletedProcess[str]:
     return ssh_command(
@@ -334,7 +350,7 @@ async def main() -> None:
 
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "promotion_start", "benchmark_end", "shutdown_request", "shutdown_finished", "ssh2_ready", "postgres2_ready"])
+        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "standby_ready", "promotion_start", "promotion_done", "benchmark_resume", "benchmark_start", "benchmark_end", "shutdown_request", "shutdown_finished", "ssh2_ready", "postgres2_ready"])
         
     t_0 = time.monotonic()
 
@@ -428,87 +444,166 @@ async def main() -> None:
             t_ssh2_ready = 0.0
             t_pg2_ready = 0.0
             t_dst_warm_start = 0.0
+            t_standby_ready = 0.0
             t_promotion_start = 0.0
+            t_promotion_done = 0.0
+            t_benchmark_resume = 0.0
 
             port_actual = dst_port if config.prepare_restart else src_port
             
-            if config.prepare_restart:
-                event_logger.mark("destination_boot_start")
-                dst_vm = start_vm(overlay=dst_overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
-                event_logger.mark(
-                    "destination_process_started",
-                    f"pid={dst_vm.pid}",
-                )
-                await dst.wait_for_qmp(dst_vm, 20)
-                event_logger.mark("destination_qmp_ready")
-                wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
             t_ssh2_ready = time.monotonic()
 
             if(config.restart):
                 time.sleep(config.sleep_timer)  
 
-                
-                scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-preshut", log_file=src_log)
-                scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.csv", log_file=src_log)
-                scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-sampler.log" ,local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.log", log_file=src_log)
-                find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
-                scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}-preshut.json", log_file=src_log)
-
-                # TODO measure t_pg2_ready for prepared?
-
-                if config.prewarm and not config.prepare_restart:
-                    ssh_command(
-                        user=config.guest_user, port=src_port, key=config.ssh_key,
-                        remote_cmd="sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c 'SELECT autoprewarm_dump_now();'",
-                        timeout=30.0, log_file=src_log,
-                    )
                 if config.prepare_restart:
-                    standby = ssh_command(
-                        user=config.guest_user,
-                        port=dst_port,
-                        key=config.ssh_key,
-                        remote_cmd="sudo -n -u postgres psql -d postgres -tA -c 'SELECT pg_is_in_recovery();'",
+                    event_logger.mark("destination_boot_start")
+                    dst_vm = start_vm(overlay=dst_overlay, ssh_port=dst_port, qmp_sock=dst_sock, log_file=dst_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
+                    event_logger.mark("destination_process_started", f"pid={dst_vm.pid}")
+                    await dst.wait_for_qmp(dst_vm, 20)
+                    event_logger.mark("destination_qmp_ready")
+
+                    wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
+                    t_ssh2_ready = time.monotonic()
+                    event_logger.mark("destination_ssh_ready")
+
+                    wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
+                    t_pg2_ready = time.monotonic()
+                    event_logger.mark("destination_standby_postgres_ready")
+
+                    standby = ssh_command(user=config.guest_user, port=dst_port, key=config.ssh_key,
+                        remote_cmd=(
+                            "sudo -n -u postgres "
+                            "psql -d postgres -tA "
+                            "-c 'SELECT pg_is_in_recovery();'"
+                        ),
                         timeout=10.0,
                         log_file=dst_log,
                     )
-
                     if standby.stdout.strip() != "t":
-                        raise RuntimeError("Prepared restart destination is not a standby")
-
-                    # TODO check for wal lag or throughput so dest is warm
-
-                    t_promotion_start = time.monotonic()
-                    ssh_command(
-                        user=config.guest_user,
-                        port=dst_port,
-                        key=config.ssh_key,
-                        remote_cmd="sudo -n -u postgres psql -d postgres -c 'SELECT pg_promote(wait => true);'",
-                        timeout=60.0,
-                        log_file=dst_log,
-                    )
-                    # t_promotion_finished = time.monotonic() (same as t_shutdown_request)
-
-                    wait_for_return(
-                        config.guest_user,
-                        dst_port,
-                        config.ssh_key,
-                        "sudo -n -u postgres psql -d postgres -tA -c 'SELECT NOT pg_is_in_recovery();' | grep -q t",
-                        60.0,
-                    )
-
-
-                t_shutdown_request = time.monotonic()
-                await src.powerdown()
-
-                try:
-                    await asyncio.to_thread(src_vm.wait, timeout=120.0)
-                except subprocess.TimeoutExpired:
-                    raise TimeoutError("Guest did not shut down cleanly after system_powerdown.")
-                
-                t_power_off = time.monotonic()
-
+                        raise RuntimeError(
+                            "Prepared destination is not a standby"
+                        )
                     
-                if not config.prepare_restart:
+                    # Wait for wal to catch up
+                    deadline = time.monotonic() + 300.0
+                    while True:
+                        lag = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key,
+                            remote_cmd=(
+                                "sudo -n -u postgres "
+                                "psql -d postgres -tA -c \""
+                                "SELECT COALESCE("
+                                "pg_wal_lsn_diff("
+                                "pg_current_wal_flush_lsn(), "
+                                "replay_lsn"
+                                "), -1)::bigint "
+                                "FROM pg_stat_replication "
+                                "WHERE state = 'streaming' "
+                                "LIMIT 1;\""
+                            ), timeout=10.0, log_file=src_log,
+                        )
+
+                        if lag.returncode != 0:
+                            raise RuntimeError(
+                                "Replication lag query failed: "
+                                f"{lag.stderr.strip()}"
+                            )
+
+                        try:
+                            lag_bytes = int(lag.stdout.strip())
+                        except ValueError:
+                            lag_bytes = -1
+
+                        if 0 <= lag_bytes <= 16 * 1024 * 1024:
+                            break
+
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(
+                                "Standby did not catch up"
+                            )
+
+                        time.sleep(0.5)
+                    event_logger.mark(
+                        "standby_ready",
+                        f"lag_bytes={lag_bytes}",
+                    )
+                    t_standby_ready = time.monotonic()
+
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log", local_path=config.log_path/f"bench-run-{run}-preshut", log_file=src_log)
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv", local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.csv", log_file=src_log)
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-sampler.log", local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.log", log_file=src_log)
+                    find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
+                    if find_pg_log.stdout.strip():
+                        scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip(), local_path=config.log_path/f"postgres-run-{run}-preshut.json", log_file=src_log)
+                    
+                    event_logger.mark("source_shutdown_request")
+                    t_shutdown_request = time.monotonic()
+                    await src.powerdown()
+                    try:
+                        await asyncio.to_thread(
+                            src_vm.wait,
+                            timeout=120.0,
+                        )
+                    except subprocess.TimeoutExpired:
+                        raise TimeoutError(
+                            "Source VM did not shut down cleanly"
+                        )
+                    t_power_off = time.monotonic()
+                    event_logger.mark("source_powered_off")
+
+                    # Wait until WAL is replayed
+                    event_logger.mark("standby_replay_drain_start")
+                    wait_for_standby(user=config.guest_user, port=dst_port, key=config.ssh_key, log_file=dst_log, timeout=60.0)
+                    event_logger.mark("standby_replay_drained") 
+
+                    # Promote replayed DB
+                    t_promotion_start = time.monotonic()
+                    event_logger.mark("promotion_start")
+                    promotion = ssh_command(user=config.guest_user, port=dst_port, key=config.ssh_key,
+                        remote_cmd=(
+                            "sudo -n -u postgres "
+                            "psql -d postgres "
+                            "-c 'SELECT pg_promote(wait => true);'"
+                        ), timeout=60.0, log_file=dst_log,
+                    )
+                    if promotion.returncode != 0:
+                        raise RuntimeError(f"Standby promotion failed: {promotion.stderr}")
+                    event_logger.mark("promotion_complete")
+                    t_promotion_done = time.monotonic()
+                    
+                    wait_for_return(user=config.guest_user, port=dst_port, key=config.ssh_key,
+                        remote_cmd=(
+                            "sudo -n -u postgres "
+                            "psql -d postgres -tA "
+                            "-c 'SELECT NOT pg_is_in_recovery();' "
+                            "| grep -q t"
+                        ), timeout=60.0,
+                    )
+                else:
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-preshut", log_file=src_log)
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.csv", log_file=src_log)
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-sampler.log" ,local_path=config.log_path/f"bench-run-{run}-preshut-pgstats.log", log_file=src_log)
+                    find_pg_log = ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1", timeout=5, log_file=src_log)
+                    scp_from_guest(user=config.guest_user, ssh_port=src_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}-preshut.json", log_file=src_log)
+
+                    if config.prewarm and not config.prepare_restart:
+                        ssh_command(
+                            user=config.guest_user, port=src_port, key=config.ssh_key,
+                            remote_cmd="sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c 'SELECT autoprewarm_dump_now();'",
+                            timeout=30.0, log_file=src_log,
+                        )
+
+                    t_shutdown_request = time.monotonic()
+                    event_logger.mark("source_powerdown_requested")
+                    await src.powerdown()
+                    try:
+                        await asyncio.to_thread(src_vm.wait, timeout=120.0)
+                    except subprocess.TimeoutExpired:
+                        raise TimeoutError("Guest did not shut down cleanly after system_powerdown.")
+                    t_power_off = time.monotonic()
+                    event_logger.mark("source_powered_off")
+                        
+                    # if not config.prepare_restart:
                     event_logger.mark("destination_boot_start")
                     dst_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=dst_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu)
                     event_logger.mark(
@@ -517,23 +612,19 @@ async def main() -> None:
                     )
                     await dst.wait_for_qmp(dst_vm, 20)
                     event_logger.mark("destination_qmp_ready")
+
                     wait_for_return(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="true", timeout=60.0)
                     t_ssh2_ready = time.monotonic()
-                
 
-                wait_for_return(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
-                event_logger.mark("destination_postgres_ready")
+                    wait_for_return(user=config.guest_user, port=port_actual, key=config.ssh_key, remote_cmd="pg_isready -h 127.0.0.1 -p 5432 -q -t 1", timeout=120.0)
+                    t_pg2_ready = time.monotonic()
+                    event_logger.mark("destination_postgres_ready")
 
-                t_pg2_ready = time.monotonic()
-                
                 start_pg_buffer_sampler(user=config.guest_user, port=port_actual, key=config.ssh_key, log_file=src_log)
-                ssh_command(user=config.guest_user, 
-                        port=port_actual, 
-                        key=config.ssh_key,
-                        remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
-                                    ">/tmp/bench.log 2>&1 &"), 
-                        timeout=10.0,
-                        log_file=src_log)
+                ssh_command(user=config.guest_user, port=port_actual, key=config.ssh_key, 
+                            remote_cmd=(f"nohup bash -c '{bench_command}; touch /tmp/bench.done' "
+                                    ">/tmp/bench.log 2>&1 &"), timeout=10.0, log_file=src_log)
+                t_benchmark_resume = time.monotonic()
                 event_logger.mark("destination_benchmark_start")
             
 
@@ -578,8 +669,11 @@ async def main() -> None:
                     run, 
                     t_ssh_ready - t_start, 
                     t_postgres_ready - t_start, 
-                    t_bench_started - t_start,
+                    t_standby_ready - t_start,
                     t_promotion_start - t_start,
+                    t_promotion_done - t_start,
+                    t_benchmark_resume - t_start,
+                    t_bench_started - t_start,
                     t_bench_completed - t_start,
                     t_shutdown_request - t_start if config.restart else 0.0, 
                     t_power_off - t_start if config.restart else 0.0,

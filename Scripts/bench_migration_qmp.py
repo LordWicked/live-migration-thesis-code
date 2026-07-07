@@ -163,13 +163,7 @@ def scp_from_guest(user: str, ssh_port: int, ssh_key: Path, remote_path: str, lo
         log_file.write(f"Stdout: {proc.stdout}\n")
         log_file.write(f"Stderr: {proc.stderr}\n")
         log_file.flush()
-
-    return subprocess.run(
-        cmd,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-    )
+    return proc
 
 def start_pg_buffer_sampler(user: str, port: int, key: Path, log_file: TextIO) -> subprocess.CompletedProcess[str]:
     return ssh_command(
@@ -224,6 +218,7 @@ class VMMonitor:
         deadline = time.monotonic() + timeout
         error =  None
         while True:
+            # print(self.sock_path)
             if proc.poll() is not None:
                 raise RuntimeError(f"{self.name} exited before QMP was ready")
             try:
@@ -366,7 +361,7 @@ async def main() -> None:
 
     with open(config.out_csv, "w", newline="") as csvfile:
         csv_writer = csv.writer(csvfile)
-        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "migration_start", "migration_end", "benchmark_end"])
+        csv_writer.writerow(["run", "ssh_ready", "postgres_ready", "benchmark_start", "destination_boot", "migration_start", "migration_end", "benchmark_end"])
 
     t_0 = time.monotonic()
 
