@@ -43,6 +43,7 @@ class Config:
     scan_proportion: float
     sleep_timer: float
     auto_converge: int
+    postcopy_sleep: int
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,8 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--readmodification-proportion", type=float, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--scan-proportion", type=float, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and migration start in seconds")
-    parser.add_argument("--auto-converge", type=int, default=0, help="Sets auto-converge. 0: off (default), 1: on") # TODO options for post- / precopy
-    # parser.add_argument("")
+    parser.add_argument("--auto-converge", type=int, default=0, help="Sets auto-converge. 0: off (default), 1: on")
+    parser.add_argument("--postcopy-sleep", type=int, default=0, help="Timer for postcopy to wait after precopy has been called. Default: 0.0")
     return parser
 
 def create_overlay_image(base: Path, overlay: Path) -> None:
@@ -236,7 +237,8 @@ class VMMonitor:
         """Mode: 0 = precopy | 1 = postcopy"""
         await self.cmd("migrate-set-capabilities", 
                        {"capabilities": [{"capability": "auto-converge", "state": converge != 0}, 
-                                         {"capability": "events", "state": True}, #]})
+                                         {"capability": "events", "state": True},
+                                         {"capability": "postcopy-blocktime", "state": mode == 1},
                                          {"capability": "postcopy-ram", "state": mode == 1}]})
         return await self.cmd("migrate", {"uri":uri})
         
@@ -251,15 +253,38 @@ class VMMonitor:
     async def quit(self): 
         """Forces shutdown, will trigger postgres WAL recovery"""
         return await self.cmd("quit")
-    
-    async def wait_for_migration_completed(self) -> None:
-        async for event in self.qmp.events:
-            if event.get("event") == "MIGRATION":
-                data = cast(dict[str, Any], event.get("data", {}))
-                if data.get("status") == "completed":
-                    return
-                if data.get("status") == "failed":
-                    raise RuntimeError("Migration failed according to QMP event")
+                
+async def poll_migration(src: VMMonitor, dst: VMMonitor, t_start: float, json_data: list, stop_copy: bool, postcopy: bool, postcopy_sleep: float, postcopy_status: asyncio.Event, event_logger: EventLogger) -> float:
+    now = 0.0
+    postcopy_sleep = time.monotonic() + postcopy_sleep
+    while True:
+        now = time.monotonic()
+        mig = await src.query_migrate()
+        json_data.append({
+            "t_monotonic": now,
+            "t_since_run_start": now - t_start,
+            "query_migrate": mig,
+        })
+
+        status = mig.get("status")
+
+        if postcopy and status == "active" and time.monotonic() >= postcopy_sleep:
+            await src.postcopy_start()
+
+        if not postcopy_status and status == 'postcopy-active': 
+            event_logger.mark("postcopy_started")
+            postcopy_status.set()
+
+        if status == "completed":
+            event_logger.mark("migration_end")
+            if stop_copy: 
+                await dst.cont()
+                event_logger.mark("destination_resumed")
+            return now
+        
+        if status == "failed": raise RuntimeError("Migration failed according to QMP")
+
+        await asyncio.sleep(0.2) # was 0.1
                 
 async def close_monitor(monitor: VMMonitor):
     try:
@@ -409,6 +434,7 @@ async def main() -> None:
 
         print(f"Time elapsed: {t_start - t_0}")
 
+        migration_poll_task: asyncio.Task[float] | None = None
 
         try:
             t_destination_boot = 0.0
@@ -474,91 +500,67 @@ async def main() -> None:
                 await dst.wait_for_qmp(dst_vm, 20)
                 event_logger.mark("destination_qmp_ready")
 
-            postcopy_started = False
             # Start migration via QMP and measure time
+            json_data = []
+            postcopy_started = asyncio.Event()
+            t_migration_completed = 0.0
+            migration_done = False 
             if config.migration_mode == 1:
-                migration_done_task = asyncio.create_task(src.wait_for_migration_completed())
                 t_migration_started = time.monotonic()
-                event_logger.mark("migration_start")
+                migration_poll_task = asyncio.create_task(poll_migration(src=src, dst=dst, t_start=t_start, json_data=json_data, stop_copy=True, postcopy=False, postcopy_sleep=0.0, postcopy_status=postcopy_started, event_logger=event_logger))
                 await src.stop()
+                event_logger.mark("source_stopped")
                 await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
-                await migration_done_task
-                await dst.cont()
-                migration_done = False # TODO if error enable again
-                t_migration_completed = time.monotonic()
+                event_logger.mark("migration_started")
             elif config.migration_mode == 2:
-                migration_done = False
                 await dst.cmd("migrate-set-capabilities", 
                        {"capabilities": [{"capability": "postcopy-ram", "state": True},
-                                        {"capability": "events", "state": True}]})
+                                         {"capability": "postcopy-blocktime", "state": True},
+                                         {"capability": "events", "state": True}]})
+                migration_poll_task = asyncio.create_task(poll_migration(src=src, dst=dst, t_start=t_start, json_data=json_data, stop_copy=False, postcopy=True, postcopy_sleep=config.postcopy_sleep, postcopy_status=postcopy_started, event_logger=event_logger))
                 t_migration_started = time.monotonic()
-                event_logger.mark("migration_start")
                 await src.migrate("unix:/tmp/mig.sock", 1, config.auto_converge)
-                while True:
-                    mig = await src.query_migrate()
-                    if mig.get("status") == "active":
-                        break
-                    await asyncio.sleep(0.1)
-                await src.postcopy_start()
-                # await src.wait_for_migration_completed()
-                t_migration_completed = 0.0
-                postcopy_started = True
+                event_logger.mark("migration_started")
             else:
-                migration_done = False
-                await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
+                migration_poll_task = asyncio.create_task(poll_migration(src=src, dst=dst, t_start=t_start, json_data=json_data, stop_copy=False, postcopy=False, postcopy_sleep=0.0, postcopy_status=postcopy_started, event_logger=event_logger))
                 t_migration_started = time.monotonic()
-                event_logger.mark("migration_start")
-                t_migration_completed = 0.0
+                await src.migrate("unix:/tmp/mig.sock", 0, config.auto_converge)
+                event_logger.mark("migration_started")
 
                 
             # Wait for migration and benchmark to finish
-            json_data = []
             deadline = time.monotonic() + 300.0
             bench_done = False
             t_bench_completed = 0.0
             warning = False
-            postcopy_active_logged = False
             while True:
                 now = time.monotonic()
 
-                if not migration_done:
-                    mig = await src.query_migrate()
-                    json_data.append({
-                        "t_monotonic": now,
-                        "t_since_run_start": now - t_start,
-                        "query_migrate": mig,
-                    })
-                    status = mig.get("status")
-                    if not postcopy_active_logged and status == 'postcopy-active': 
-                        event_logger.mark("postcopy_start_requested")
-                        postcopy_active_logged = True
-                    if  status == "completed":
-                        migration_done = True
-                        event_logger.mark("migration_end")
-                        t_migration_completed = now
-                        try: 
-                            event_logger.mark(
-                                "source_terminate_requested",
-                                f"pid={src_vm.pid}",
-                            )
-                            src_vm.terminate()
-                            await close_monitor(src)
-                            await stop_vm_proc(src_vm, src.name, src_log)
-                            event_logger.mark(
-                                "source_terminated",
-                                f"pid={src_vm.pid}",
-                            )
-                        except subprocess.SubprocessError as e:
-                            raise e
-                    elif status == "failed":
-                        raise RuntimeError("Migration failed according to QMP")
+                if not migration_done and migration_poll_task.done():
+                    t_migration_completed = migration_poll_task.result()
+                    migration_done = True
+
+                    try: 
+                        event_logger.mark(
+                            "source_terminate_requested",
+                            f"pid={src_vm.pid}",
+                        )
+                        src_vm.terminate()
+                        await close_monitor(src)
+                        await stop_vm_proc(src_vm, src.name, src_log)
+                        event_logger.mark(
+                            "source_terminated",
+                            f"pid={src_vm.pid}",
+                        )
+                    except subprocess.SubprocessError as e:
+                        raise e
                     
                 if not bench_done:
-                    guest_on_dst = migration_done or postcopy_started
+                    guest_on_dst = migration_done or postcopy_started.is_set()
                     port = dst_port if guest_on_dst else src_port
                     log = dst_log if guest_on_dst else src_log
                     try:
-                        proc = ssh_command(user=config.guest_user, port=port, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=log)
+                        proc = await asyncio.to_thread(ssh_command, user=config.guest_user, port=port, key=config.ssh_key, remote_cmd="test -f /tmp/bench.done", timeout=2.0, log_file=log)
                         if proc.returncode == 0:
                             event_logger.mark("benchmark_end")
                             bench_done = True
@@ -578,7 +580,7 @@ async def main() -> None:
                         print(f"Timed out waiting for benchmark completion on socket {dst_sock}.\nTerminate this process manually if this is unexpected.")
                     warning = True
 
-                time.sleep(0.1)
+                await asyncio.sleep(2) # was 0.1
 
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}", log_file=dst_log)
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-pgstats.csv", log_file=dst_log)
@@ -605,6 +607,12 @@ async def main() -> None:
         except Exception as e:
             raise e
         finally:
+            if migration_poll_task is not None and not migration_poll_task.done():
+                migration_poll_task.cancel()
+                try:
+                    await migration_poll_task
+                except asyncio.CancelledError:
+                    pass
             if host_sampler is not None: await host_sampler.stop()
             if event_logger is not None: event_logger.close()
             await cleanup(src, src_vm, dst, dst_vm, src_log, dst_log)
