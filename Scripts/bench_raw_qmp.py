@@ -654,7 +654,7 @@ async def main() -> None:
                         print(f"Timed out waiting for benchmark completion on socket {src_sock}.\nTerminate this process manually if this is unexpected.")
                     warning = True
 
-                time.sleep(0.1)
+                time.sleep(2)
 
             scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path="/tmp/bench.log" ,local_path=config.log_path/f"bench-run-{run}-final", log_file=src_log)
             scp_from_guest(user=config.guest_user, ssh_port=port_actual, ssh_key=config.ssh_key, remote_path="/tmp/pg-buffer-hit-ratio.csv" ,local_path=config.log_path/f"bench-run-{run}-final-pgstats.csv", log_file=src_log)
