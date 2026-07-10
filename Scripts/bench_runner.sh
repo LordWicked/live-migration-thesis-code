@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 RUNS=10
-DIRECTORY="logs_05_chungus"
+DIRECTORY="logs_0x_onetrialtorulethemall"
 RECORDS=2500000
 
 mig_runner() {
@@ -22,11 +22,12 @@ mig_runner() {
     local rm=${13}
     local scan=${14}
     local ac=${15}
+    local pcsleep=${16}
 
     local logs="./$DIRECTORY/$tag/"
     mkdir -p "${logs}"
 
-    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nmigration-mode (0: precopy, 1: stop-copy, 2: postcopy): ${mode}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nauto-converge: ${ac}" > "${logs}/${tag}_specs"
+    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nmigration-mode (0: precopy, 1: stop-copy, 2: postcopy): ${mode}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nauto-converge: ${ac}\npostcopy-sleep after mig start: ${pcsleep}\n" > "${logs}/specs_${tag}"
 
     /home/max/Bachelor-Thesis/Repo/.venv/bin/python ./bench_migration_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
@@ -48,8 +49,8 @@ mig_runner() {
     --scan-proportion "${scan}" \
     --sleep-timer "${sleep}" \
     --auto-converge "${ac}" \
-    --runs "${RUNS}"
-    # --runs 1 
+    --runs "${RUNS}" \
+    --postcopy-sleep "${pcsleep}"
 }
 
 restart_runner() {
@@ -75,7 +76,7 @@ restart_runner() {
     local logs="./$DIRECTORY/$tag/"
     mkdir -p "${logs}"
 
-    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprewarmed: ${prewarmed}" > "${logs}/${tag}_specs"  # prepare-VM2: ${prepare}\n
+    echo -e "memory: ${memory}\nsleep: ${sleep}\ncores: ${cores}\ncpu: ${cpu}\nopcount: ${opcount}\nthreads: ${threads}\nwrite-prop: ${write}\nread: ${read}\nupdate-prop: ${upd}\ninsert-prop: ${ins}\nreadmod-prop: ${rm}\nscan-prop: ${scan}\nrestart: ${restart}\nprewarmed: ${prewarmed}\nprepared: ${prepare}\n" > "${logs}/specs_${tag}"  # prepare-VM2: ${prepare}\n
 
     /home/max/Bachelor-Thesis/Repo/.venv/bin/python ./bench_raw_qmp.py \
     /home/max/Bachelor-Thesis/VMs/postgresvm/vm_test_qcow2 \
@@ -101,50 +102,53 @@ restart_runner() {
     --prepare-restart "${prepare}" \
     --prewarm "${prewarmed}" \
     --runs "${RUNS}"
-    # --runs 1 
 }
 
 # Raw # was 1000000
-echo -e "raw:" && restart_runner "raw" 8 0 4 host 1000000 16 0 0 1 0 0 0 0 0  && echo       # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep, no restart
+echo -e "Baseline_4T:" && restart_runner "Baseline_4T" 8 0 4 host 250000 4 0 0 1 0 0 0 0 0 0 && echo
+echo -e "Baseline_16T:" && restart_runner "Baseline_16T" 8 0 4 host 500000 16 0 0 1 0 0 0 0 0 0 && echo
+echo -e "Baseline_16T_Reads:" && restart_runner "Baseline_16T_Reads" 8 0 4 host 500000 16 0 0.9 0.1 0 0 0 0 0 0 && echo
 
-# # Precopy 1: Bench faster than migration -> Migration finishes after bench
-echo -e "pre_10:" && mig_runner "pre_10" 8 0 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
-echo -e "pre_11:" && mig_runner "pre_11"     8 5 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
-echo -e "pre_12:" && mig_runner "pre_12" 8 50 4 0 host 1000000 8 0 0 1 0 0 0 0 && echo      # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
-echo -e "pre_13:" && mig_runner "pre_13" 8 50 4 0 host 1000000 16 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
-echo -e "pre_14:" && mig_runner "pre_14" 8 50 4 0 host 1000000 32 0 0 1 0 0 0 0 && echo     # 8GB, 1 mil ops, 32 threads, 100% writes, 50 sec sleep
+# Precopy 1: Bench faster than migration -> Migration finishes after bench (/waren 1000000)
+echo -e "Precopy_Convergent:" && mig_runner "Precopy_Convergent" 8 130 4 0 host 250000 4 0 0 1 0 0 0 0 0 && echo        # war 100s, genau auf dip
 
-# Precopy 2: Bench slower -> Migration happens quickly after call
-echo -e "pre_20:" && mig_runner "pre_20" 8 0 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
-echo -e "pre_21:" && mig_runner "pre_21" 8 5 4 0 host 100000 1 0 0 1 0 0 0 0 && echo        # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
-echo -e "pre_22:" && mig_runner "pre_22" 8 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-echo -e "pre_23:" && mig_runner "pre_23" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-echo -e "pre_24:" && mig_runner "pre_24" 4 50 4 0 host 100000 1 0 0 1 0 0 0 0 && echo       # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+# Precopy 2: Bench slower -> Migration happens quickly after call (waren 100000)
+echo -e "Precopy_Nonconvergent_16T:" && mig_runner "Precopy_Nonconvergent_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 0 0 && echo        
+echo -e "Precopy_Nonconvergent_Reads_16T:" && mig_runner "Precopy_Nonconvergent_Reads_16T" 8 100 4 0 host 500000 16 0 0.9 0.1 0 0 0 0 0 && echo  # run again
 
-# Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy)
-echo -e "pre_30:" && mig_runner "pre_30" 8 0 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 00 sec sleep
-echo -e "pre_31:" && mig_runner "pre_31" 8 5 4 1 host 100000 16 0 0 1 0 0 0 0 && echo       # 8GB, 50 ops, 16 threads, 100% writes, 05 sec sleep
-echo -e "pre_32:" && mig_runner "pre_32" 8 50 4 1 host 100000 16 0 0 1 0 0 0 0 && echo      # 8GB, 50 ops, 16 threads, 100% writes, 50 sec sleep
+# Postcopy: # alle waren 1000000
+# echo -e "post_light_1T:" && mig_runner "post_light_1T" 8 100 4 2 host 100000 1 0 0 1 0 0 0 0 0 && echo
+echo -e "Postcopy_4T:" && mig_runner "Postcopy_4T" 8 130 4 2 host 250000 4 0 0 1 0 0 0 0 0 && echo                      # war 100s, genau auf dip
+echo -e "Postcopy_16T:" && mig_runner "Postcopy_16T" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 0 && echo
 
+# Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy) waren 500000
+echo -e "Stop_Copy:" && mig_runner "Stop_Copy_4T" 8 130 4 1 host 250000 4 0 0 1 0 0 0 0 0 && echo
 
-Postcopy: 
-echo -e "post_10:" && mig_runner "post_10" 8 0 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 00 sec sleep
-echo -e "post_11:" && mig_runner "post_11" 8 5 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 16 threads, 100% writes, 05 sec sleep
-echo -e "post_12:" && mig_runner "post_12" 8 50 4 2 host 1000000 8 0 0 1 0 0 0 0 && echo    # 8GB, 1 mil ops, 8 threads, 100% writes, 50 sec sleep
-echo -e "post_13:" && mig_runner "post_13" 8 50 4 2 host 1000000 16 0 0 1 0 0 0 0 && echo   # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
+# Precopy Autoconverge:
+echo -e "Autoconverge_16T:" && mig_runner "Autoconverge_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 1 0 && echo
 
-echo -e "post_20:" && mig_runner "post_20" 8 0 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 00 sec sleep
-echo -e "post_21:" && mig_runner "post_21" 8 5 4 2 host 100000 1 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 0 threads, 100% writes, 05 sec sleep
-echo -e "post_22:" && mig_runner "post_22" 8 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 8GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-echo -e "post_23:" && mig_runner "post_23" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
-echo -e "post_24:" && mig_runner "post_24" 4 50 4 2 host 100000 1 0 0 1 0 0 0 0 && echo     # 4GB, 100k ops, 0 threads, 100% writes, 50 sec sleep
+# Belated Postcopy:
+echo -e "Postcopy_Late_16T_25s:" && mig_runner "Postcopy_Late_16T_25s" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 25 && echo
+echo -e "Postcopy_Late_16T_40s:" && mig_runner "Postcopy_Late_16T_40s" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 40 && echo
 
-# Restart 1: Clean shutdown during benchmark (11:cold 12:prewarmed)
-echo -e "restart_raw:" && restart_runner "restart_raw" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 0 && echo  # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
-echo -e "restart_prewarmed:" && restart_runner "restart_prewarmed" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 1 && echo   # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep, prewarmed
+# # Restart 1: Clean shutdown during benchmark (11:cold 12:prewarmed)
+echo -e "Cold_Restart_4T:" && restart_runner "Cold_Restart_4T" 8 130 4 host 250000 4 0 0 1 0 0 0 1 0 0 && echo
+echo -e "Prewarmed_4T:" && restart_runner "Prewarmed_4T" 8 130 4 host 250000 4 0 0 1 0 0 0 1 1 0 && echo
 
-# # Maybe not easily doable:
 # # Restart 2: Clean shutdown with prepared restart (21:cold 22:prewarmed)
-# echo -e "restart_21:" && restart_runner "restart_21" 8 50 4 host 1000000 16 0 0 1 0 0 0 1 1 False && echo  # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep
-# restart_runner "restart_22" 8 50 4 host 1000000 16 0 0 1 0 0 0 True True True    # 8GB, 1 mil ops, 16 threads, 100% writes, 50 sec sleep, prewarmed
+echo -e "Prepared_4T:" && restart_runner "Prepared_4T" 8 130 4 host 250000 4 0 0 1 0 0 0 1 0 1 && echo
 
+
+
+
+# Lost Benchmarks:
+# echo -e "raw_clean_1T:" && restart_runner "raw_clean_1T" 8 0 4 host 100000 1 0 0 1 0 0 0 0 0 0 && echo
+# echo -e "pre_light_convergent:" && mig_runner "pre_light_convergent" 8 100 4 0 host 100000 1 0 0 1 0 0 0 0 0 && echo
+# echo -e "post_late_12T:" && mig_runner "spam_betterstatus_pretopost_late_50s_12T" 8 100 4 2 host 500000 12 0 0 1 0 0 0 0 50 && echo
+# echo -e "pre_nonconvergent_12T:" && mig_runner "spam_pre_nonconvergent_12T" 8 100 4 0 host 500000 12 0 0 1 0 0 0 0 0 && echo        
+# echo -e "raw:" && restart_runner "raw_stress_8T" 8 0 4 host 500000 8 0 0 1 0 0 0 0 0 0 && echo       # 8GB, 100k ops, 1 threads, 100% writes, 00 sec sleep, no restart
+# echo -e "raw:" && restart_runner "raw_stress_16T" 8 0 4 host 500000 16 0 0 1 0 0 0 0 0 0 && echo       # 8GB, 100k ops, 1 threads, 100% writes, 00 sec sleep, no restart
+
+# echo -e "pre_11:" && mig_runner "pre_stress_8T_1500guest" 8 100 4 0 host 500000 8 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep
+# echo -e "pre_11:" && mig_runner "pre_stress_12T" 8 100 4 0 host 500000 12 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep
+# echo -e "pre_11:" && mig_runner "pre_stress_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep
