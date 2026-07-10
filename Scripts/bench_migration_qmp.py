@@ -257,6 +257,7 @@ class VMMonitor:
 async def poll_migration(src: VMMonitor, dst: VMMonitor, t_start: float, json_data: list, stop_copy: bool, postcopy: bool, postcopy_sleep: float, postcopy_status: asyncio.Event, event_logger: EventLogger) -> float:
     now = 0.0
     postcopy_sleep = time.monotonic() + postcopy_sleep
+    postcopy_requested = False
     while True:
         now = time.monotonic()
         mig = await src.query_migrate()
@@ -268,10 +269,12 @@ async def poll_migration(src: VMMonitor, dst: VMMonitor, t_start: float, json_da
 
         status = mig.get("status")
 
-        if postcopy and status == "active" and time.monotonic() >= postcopy_sleep:
+        if postcopy and not postcopy_requested and status == "active" and time.monotonic() >= postcopy_sleep:
             await src.postcopy_start()
+            event_logger.mark("postcopy_requested")
+            postcopy_requested = True
 
-        if not postcopy_status and status == 'postcopy-active': 
+        if not postcopy_status.is_set() and status == 'postcopy-active': 
             event_logger.mark("postcopy_started")
             postcopy_status.set()
 
@@ -319,11 +322,14 @@ async def cleanup(src: VMMonitor, src_vm: subprocess.Popen, dst: VMMonitor, dst_
         await close_monitor(dst)
         await stop_vm_proc(src_vm, src.name, src_log)
         await stop_vm_proc(dst_vm, dst.name, dst_log)
+        
     finally:
         if src_log and not src_log.closed:
             src_log.close()
         if dst_log and not dst_log.closed:
             dst_log.close()
+        if Path("/tmp/mig.sock").exists():
+            Path("/tmp/mig.sock").unlink()
 
 STATUS_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}) "
@@ -402,9 +408,9 @@ async def main() -> None:
         dlog_path = config.log_path/f"dst-run-{run}.log"
         if slog_path.exists(): slog_path.unlink()
         if dlog_path.exists(): dlog_path.unlink()
-        src_log = open(config.log_path/f"src-run-{run}.log", "a")
-        dst_log = open(config.log_path/f"dst-run-{run}.log", "a")
-        mig_log = open(config.log_path/f"mig-stats-run-{run}.json", "a")
+        src_log = open(config.log_path/f"src-run-{run}.log", "w")
+        dst_log = open(config.log_path/f"dst-run-{run}.log", "w")
+        # mig_log = open(config.log_path/f"mig-stats-run-{run}.json", "w")
         src = VMMonitor(f"src{run}", src_sock, src_log)
         dst = VMMonitor(f"dst{run}", dst_sock, dst_log)
         overlay = config.overlay / f"run{run}.qcow2"
@@ -589,7 +595,8 @@ async def main() -> None:
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}.json", log_file=dst_log)
             
             # Append results to CSV
-            mig_log.write(json.dumps(json_data))
+            with open(config.log_path/f"mig-stats-run-{run}.json", "w") as mig_log:
+                mig_log.write(json.dumps(json_data))
             with open(config.out_csv, "a", newline="") as csvfile:
                 csv.writer(csvfile).writerow([
                     run, 

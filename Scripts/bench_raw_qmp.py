@@ -154,7 +154,7 @@ def wait_for_standby(user: str, port: int, key: Path, log_file: TextIO, timeout:
                              remote_cmd= ("sudo -n -u postgres "
                                           "psql -d postgres -tA -c \""
                                           "SELECT "
-                                          "pg_last_wal_receive_lsn() IS NOT NULL "
+                                          "pg_last_wal_receive_lsn() IS NOT NULL "      # TODO Capture WAL LSN from source and compare that with pg_last_wal_replay_lsn();
                                           "AND pg_last_wal_replay_lsn() IS NOT NULL "
                                           "AND pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn();"
                                           "\""), 
@@ -362,8 +362,8 @@ async def main() -> None:
         dst_sock = Path(f"/tmp/{config.socket_naming}src-pgvm-qmp-reboot-{run}.sock")
         if src_sock.exists(): src_sock.unlink()
         if dst_sock.exists(): dst_sock.unlink()
-        src_log = open(config.log_path/f"src-run-{run}.log", "a")
-        dst_log = open(config.log_path/f"src-run-{run}-reboot.log", "a")
+        src_log = open(config.log_path/f"src-run-{run}.log", "w")
+        dst_log = open(config.log_path/f"src-run-{run}-reboot.log", "w")
         src = VMMonitor(f"src{run}", src_sock, src_log)
         dst = VMMonitor(f"src{run}_reboot", dst_sock, dst_log)
         overlay = config.overlay / f"{config.socket_naming}run{run}.qcow2"
