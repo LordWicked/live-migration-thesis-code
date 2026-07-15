@@ -289,6 +289,39 @@ async def poll_migration(src: VMMonitor, dst: VMMonitor, t_start: float, json_da
 
         await asyncio.sleep(0.2) # was 0.1
                 
+async def poll_hugepage(dst_vm: subprocess.Popen) -> subprocess.CompletedProcess[str]:
+    smaps_path = f"/proc/{dst_vm.pid}/smaps_rollup"
+
+    hugepages = subprocess.run(
+        [
+            "grep",
+            "-E",
+            "^(Rss|Pss|AnonHugePages):",
+            smaps_path,
+        ],
+        text=True, capture_output=True, timeout=5,
+    )
+
+    if not hugepages.returncode == 0:
+        print(
+            f"Failed to read {smaps_path}: "
+            f"{hugepages.stderr.strip()}"
+        ) 
+    return hugepages
+        
+
+async def repeated_hp_poll(dst_vm: subprocess.Popen, log: Path):
+    timings = [0, 10, 30, 60, 120]
+    with open(log, "w") as hp_log:
+        for t in timings:
+            if hp_log.closed:
+                return
+            else:
+                await asyncio.sleep(t)
+                proc = await poll_hugepage(dst_vm=dst_vm)
+                hp_log.write(f"{t}: {proc.stdout}\n\n")
+        
+
 async def close_monitor(monitor: VMMonitor):
     try:
         await monitor.close()
@@ -481,7 +514,11 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            # timeout 200
+            if config.read_proportion == 1.0:
+                bench_command = f"cd ycsb-0.17.0 && timeout 200 bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            else:
+                bench_command = f"cd ycsb-0.17.0 && bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
             start_pg_buffer_sampler(user=config.guest_user, port=src_port, key=config.ssh_key, log_file=src_log)
             ssh_command(user=config.guest_user, 
                         port=src_port, 
@@ -546,6 +583,28 @@ async def main() -> None:
                     t_migration_completed = migration_poll_task.result()
                     migration_done = True
 
+                    if config.migration_mode == 2:
+                        # with open(config.log_path/f"hugepages-{run}.log", "w") as log:
+                        asyncio.create_task(repeated_hp_poll(dst_vm=dst_vm, log=Path(f"{config.log_path}/hugepages-{run}.log")))
+                        # smaps_path = f"/proc/{dst_vm.pid}/smaps_rollup"
+
+                        # hugepages = subprocess.run(
+                        #     [
+                        #         "grep",
+                        #         "-E",
+                        #         "^(Rss|Pss|AnonHugePages):",
+                        #         smaps_path,
+                        #     ],
+                        #     text=True, capture_output=True, timeout=5,
+                        # )
+
+                        # if hugepages.returncode == 0:
+                        #     print(hugepages.stdout)
+                        # else:
+                        #     print(
+                        #         f"Failed to read {smaps_path}: "
+                        #         f"{hugepages.stderr.strip()}"
+                        #     )
                     try: 
                         event_logger.mark(
                             "source_terminate_requested",
@@ -595,6 +654,15 @@ async def main() -> None:
             scp_from_guest(user=config.guest_user, ssh_port=dst_port, ssh_key=config.ssh_key, remote_path=find_pg_log.stdout.strip() ,local_path=config.log_path/f"postgres-run-{run}.json", log_file=dst_log)
             
             # Append results to CSV
+            now = time.monotonic()
+            mig = await dst.query_migrate()
+            json_data.append({
+                "t_monotonic": now,
+                "t_since_run_start": now - t_start,
+                "query_migrate": mig,
+            })
+
+
             with open(config.log_path/f"mig-stats-run-{run}.json", "w") as mig_log:
                 mig_log.write(json.dumps(json_data))
             with open(config.out_csv, "a", newline="") as csvfile:

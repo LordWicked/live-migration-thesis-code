@@ -425,7 +425,10 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            bench_command = f"cd ycsb-0.17.0; bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            if (config.restart == 0 and not config.read_proportion == 1.0) or config.prepare_restart:
+                bench_command = f"cd ycsb-0.17.0 && bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
+            else:
+                bench_command = f"cd ycsb-0.17.0 && timeout 200 bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
             start_pg_buffer_sampler(user=config.guest_user, port=src_port, key=config.ssh_key, log_file=src_log)
             ssh_command(user=config.guest_user, 
                         port=src_port, 
@@ -589,7 +592,7 @@ async def main() -> None:
                     if config.prewarm and not config.prepare_restart:
                         ssh_command(
                             user=config.guest_user, port=src_port, key=config.ssh_key,
-                            remote_cmd="sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d postgres -c 'SELECT autoprewarm_dump_now();'",
+                            remote_cmd="sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d ycsb -c 'SELECT autoprewarm_dump_now();'",
                             timeout=30.0, log_file=src_log,
                         )
 
