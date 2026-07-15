@@ -1,0 +1,156 @@
+2026-07-15 01:19:19.588693SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 2231 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 nohup bash -c 'cd ycsb-0.17.0 && bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount=2500000 -p operationcount=500000 -threads 16 -s -p status.interval=1 -p writeproportion=0.0 -p readproportion=0.0 -p updateproportion=1.0 -p insertproportion=0.0 -p scanproportion=0.0 -p readmodifywriteproportion=0.0; touch /tmp/bench.done' >/tmp/bench.log 2>&1 &
+Return code: 0
+Stdout: 
+Stderr: 
+2026-07-15 01:21:48.924905SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:21:51.134414SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:21:53.303490SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:21:55.477082SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:21:57.652968SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:21:59.823875SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:01.984244SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:04.145670SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:06.320486SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:08.479503SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:10.646827SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:12.805016SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:14.977123SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:17.144062SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:19.324032SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:21.488988SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:23.681315SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:25.894666SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:28.072498SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:30.234221SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:32.401327SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:34.565393SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:36.723543SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:38.875733SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:41.057073SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:43.232836SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:45.409673SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:47.572902SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:49.732223SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:51.891974SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:54.048989SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+2026-07-15 01:22:56.223168SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 0
+Stdout: 
+Stderr: 
+2026-07-15 01:22:56.223339SSH command: scp -P 4453 -i /home/max/.ssh/pgvm_bench -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null user@127.0.0.1:/tmp/bench.log logs_14_major/Autoconverge_16T/bench-run-10
+Return code: 0
+Stdout: 
+Stderr: Warning: Permanently added '[127.0.0.1]:4453' (ED25519) to the list of known hosts.
+
+2026-07-15 01:22:56.369282SSH command: scp -P 4453 -i /home/max/.ssh/pgvm_bench -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null user@127.0.0.1:/tmp/pg-buffer-hit-ratio.csv logs_14_major/Autoconverge_16T/bench-run-10-pgstats.csv
+Return code: 0
+Stdout: 
+Stderr: Warning: Permanently added '[127.0.0.1]:4453' (ED25519) to the list of known hosts.
+
+2026-07-15 01:22:56.657924SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4453 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 ls -1t /var/log/postgresql/postgres*.json 2>/dev/null | head -n1
+Return code: 0
+Stdout: /var/log/postgresql/postgresql-2026-07-15_011913.json
+
+Stderr: 
+2026-07-15 01:22:56.657991SSH command: scp -P 4453 -i /home/max/.ssh/pgvm_bench -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null user@127.0.0.1:/var/log/postgresql/postgresql-2026-07-15_011913.json logs_14_major/Autoconverge_16T/postgres-run-10.json
+Return code: 0
+Stdout: 
+Stderr: Warning: Permanently added '[127.0.0.1]:4453' (ED25519) to the list of known hosts.
+
+QMP cmd [dst10] query-migrate args={}
+QMP reply [dst10] query-migrate: {'status': 'completed'}
+Cleanup terminating dst10 pid=47004
+qemu-system-x86_64: terminating on signal 15 from pid 42869 (/home/max/Bachelor-Thesis/Repo/.venv/bin/python)

@@ -1,0 +1,21 @@
+2026-07-15 12:28:46.607565SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4450 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 sudo -n -u postgres psql -d postgres -tA -c 'SELECT pg_is_in_recovery();'
+Return code: 0
+Stdout: t
+
+Stderr: 
+2026-07-15 12:29:10.981744SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4450 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 sudo -n -u postgres psql -d postgres -tA -c "SELECT pg_last_wal_receive_lsn() IS NOT NULL AND pg_last_wal_replay_lsn() IS NOT NULL AND pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn();"
+Return code: 0
+Stdout: t
+
+Stderr: 
+2026-07-15 12:29:11.647187SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 4450 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 sudo -n -u postgres psql -d postgres -c 'SELECT pg_promote(wait => true);'
+Return code: 0
+Stdout:  pg_promote 
+------------
+ t
+(1 row)
+
+
+Stderr: 
+Cleanup terminating src7_reboot pid=108239
+qemu-system-x86_64: terminating on signal 15 from pid 99517 (/home/max/Bachelor-Thesis/Repo/.venv/bin/python)

@@ -1,0 +1,45 @@
+2026-07-14 23:25:27.231504SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 2224 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 systemd-analyze
+Return code: 0
+Stdout: Startup finished in 783ms (kernel) + 3.204s (userspace) = 3.988s 
+graphical.target reached after 3.204s in userspace.
+
+Stderr: 
+2026-07-14 23:25:27.378306SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 2224 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 rm -f /tmp/bench.done /tmp/pg-buffer-hit-ratio.csv /tmp/pg-buffer-sampler.log; nohup bash /home/user/pg_sampler.sh /tmp/bench.done /tmp/pg-buffer-hit-ratio.csv ycsb >/tmp/pg-buffer-sampler.log 2>&1 &
+Return code: 0
+Stdout: 
+Stderr: 
+QMP cmd [src3] migrate-set-capabilities args={'capabilities': [{'capability': 'auto-converge', 'state': False}, {'capability': 'events', 'state': True}, {'capability': 'postcopy-blocktime', 'state': True}, {'capability': 'postcopy-ram', 'state': True}]}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] migrate-set-capabilities: {}
+QMP cmd [src3] migrate args={'uri': 'unix:/tmp/mig.sock'}
+QMP reply [src3] query-migrate: {}
+QMP reply [src3] migrate: {}
+2026-07-14 23:27:07.795731SSH command: ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=1 -o LogLevel=ERROR -p 2224 -i /home/max/.ssh/pgvm_bench user@127.0.0.1 test -f /tmp/bench.done
+Return code: 1
+Stdout: 
+Stderr: 
+qemu-system-x86_64: terminating on signal 15 from pid 34146 (/home/max/Bachelor-Thesis/Repo/.venv/bin/python)
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'expected-downtime': 300, 'status': 'active', 'setup-time': 2, 'total-time': 200, 'ram': {'total': 8607571968, 'postcopy-requests': 0, 'dirty-sync-count': 1, 'multifd-bytes': 0, 'pages-per-second': 35530, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 8574595072, 'postcopy-bytes': 0, 'mbps': 1082.3292, 'transferred': 30080701, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 30207586, 'duplicate': 691, 'dirty-pages-rate': 0, 'normal-bytes': 30142464, 'normal': 7359}}
+QMP cmd [src3] migrate-start-postcopy args={}
+QMP reply [src3] migrate-start-postcopy: {}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 402, 'ram': {'total': 8607571968, 'postcopy-requests': 3, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 124370, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 7857815552, 'postcopy-bytes': 14975268, 'mbps': 1080.20808, 'transferred': 56056589, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 169888, 'dirty-pages-rate': 0, 'normal-bytes': 53903360, 'normal': 13160}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 603, 'ram': {'total': 8607571968, 'postcopy-requests': 3, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 1615585, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 6727213056, 'postcopy-bytes': 171263789, 'mbps': 134.03286486486485, 'transferred': 212345147, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 408355, 'dirty-pages-rate': 0, 'normal-bytes': 207745024, 'normal': 50719}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 804, 'ram': {'total': 8607571968, 'postcopy-requests': 2740, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 1471392, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 5772496896, 'postcopy-bytes': 338082969, 'mbps': 2361.244235294118, 'transferred': 379069898, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 601214, 'dirty-pages-rate': 0, 'normal-bytes': 372506624, 'normal': 90944}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 1005, 'ram': {'total': 8607571968, 'postcopy-requests': 5338, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 882349, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 4988354560, 'postcopy-bytes': 661050530, 'mbps': 12355.529242718447, 'transferred': 702031581, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 714207, 'dirty-pages-rate': 0, 'normal-bytes': 693829632, 'normal': 169392}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 1206, 'ram': {'total': 8607571968, 'postcopy-requests': 6690, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 824490, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 4380782592, 'postcopy-bytes': 1107266359, 'mbps': 18126.18494117647, 'transferred': 1148253368, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 753900, 'dirty-pages-rate': 0, 'normal-bytes': 1138819072, 'normal': 278032}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 1407, 'ram': {'total': 8607571968, 'postcopy-requests': 7217, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 704640, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 3695157248, 'postcopy-bytes': 1652031964, 'mbps': 22840.88295145631, 'transferred': 1693019003, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 788625, 'dirty-pages-rate': 0, 'normal-bytes': 1682210816, 'normal': 410696}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 1607, 'ram': {'total': 8607571968, 'postcopy-requests': 7576, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 717196, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 3095375872, 'postcopy-bytes': 2174450910, 'mbps': 23082.56329411765, 'transferred': 2215437989, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 807803, 'dirty-pages-rate': 0, 'normal-bytes': 2203439104, 'normal': 537949}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 1808, 'ram': {'total': 8607571968, 'postcopy-requests': 7630, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 1268228, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 2182119424, 'postcopy-bytes': 2561035439, 'mbps': 12150.443368421054, 'transferred': 2602022558, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 936852, 'dirty-pages-rate': 0, 'normal-bytes': 2588110848, 'normal': 631863}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'postcopy-active', 'setup-time': 2, 'downtime': 7, 'total-time': 2009, 'ram': {'total': 8607571968, 'postcopy-requests': 7641, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 1403526, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 696631296, 'postcopy-bytes': 2647743282, 'mbps': 9994.863789473684, 'transferred': 2688839938, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 1279143, 'dirty-pages-rate': 0, 'normal-bytes': 2671575040, 'normal': 652240}}
+QMP cmd [src3] query-migrate args={}
+QMP reply [src3] query-migrate: {'status': 'completed', 'setup-time': 2, 'downtime': 7, 'total-time': 2125, 'ram': {'total': 8607571968, 'postcopy-requests': 7647, 'dirty-sync-count': 2, 'multifd-bytes': 0, 'pages-per-second': 1406864, 'downtime-bytes': 0, 'page-size': 4096, 'remaining': 0, 'postcopy-bytes': 2717320622, 'mbps': 10394.47972491757, 'transferred': 2758435057, 'dirty-sync-missed-zero-copy': 0, 'precopy-bytes': 40562401, 'duplicate': 1432603, 'dirty-pages-rate': 0, 'normal-bytes': 2739638272, 'normal': 668857}}
