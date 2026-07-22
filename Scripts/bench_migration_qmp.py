@@ -311,7 +311,7 @@ async def poll_hugepage(dst_vm: subprocess.Popen) -> subprocess.CompletedProcess
         
 
 async def repeated_hp_poll(dst_vm: subprocess.Popen, log: Path):
-    timings = [0, 10, 30, 60, 120]
+    timings = [0, 10, 20, 30, 60]
     with open(log, "w") as hp_log:
         for t in timings:
             if hp_log.closed:
