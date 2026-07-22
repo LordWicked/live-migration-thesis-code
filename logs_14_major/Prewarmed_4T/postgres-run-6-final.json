@@ -1,13 +1,197 @@
-{"timestamp":"2026-07-15 05:02:22.122 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":1,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"ending log output to stderr","hint":"Future log output will go to log destination \"jsonlog\".","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.122 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":2,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"starting PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 16.1.1 20260430, 64-bit","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.122 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":3,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"listening on IPv6 address \"::1\", port 5432","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.122 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":4,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"listening on IPv4 address \"127.0.0.1\", port 5432","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.134 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":5,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"listening on Unix socket \"/run/postgresql/.s.PGSQL.5432\"","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.153 CEST","pid":404,"session_id":"6a56f83e.194","line_num":1,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"database system was shut down at 2026-07-15 05:02:12 CEST","backend_type":"startup","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.188 CEST","pid":396,"session_id":"6a56f83e.18c","line_num":6,"session_start":"2026-07-15 05:02:22 CEST","txid":0,"error_severity":"LOG","message":"database system is ready to accept connections","backend_type":"postmaster","query_id":0}
-{"timestamp":"2026-07-15 05:02:22.320 CEST","pid":407,"session_id":"6a56f83e.197","line_num":1,"session_start":"2026-07-15 05:02:22 CEST","vxid":"118/0","txid":0,"error_severity":"LOG","message":"autoprewarm successfully prewarmed 16244 of 16384 previously-loaded blocks","backend_type":"autoprewarm leader","query_id":0}
-{"timestamp":"2026-07-15 05:02:23.507 CEST","user":"user","dbname":"user","pid":438,"remote_host":"127.0.0.1","remote_port":44744,"session_id":"6a56f83f.1b6","line_num":1,"ps":"startup","session_start":"2026-07-15 05:02:23 CEST","vxid":"0/1","txid":0,"error_severity":"FATAL","state_code":"28000","message":"role \"user\" does not exist","backend_type":"client backend","query_id":0}
-{"timestamp":"2026-07-15 05:05:44.727 CEST","user":"ycsb","dbname":"ycsb","pid":516,"remote_host":"127.0.0.1","remote_port":44778,"session_id":"6a56f83f.204","line_num":1,"ps":"idle","session_start":"2026-07-15 05:02:23 CEST","vxid":"2/0","txid":0,"error_severity":"LOG","state_code":"08006","message":"could not receive data from client: Connection reset by peer","application_name":"PostgreSQL JDBC Driver","backend_type":"client backend","query_id":0}
-{"timestamp":"2026-07-15 05:05:44.727 CEST","user":"ycsb","dbname":"ycsb","pid":519,"remote_host":"127.0.0.1","remote_port":44798,"session_id":"6a56f83f.207","line_num":1,"ps":"idle","session_start":"2026-07-15 05:02:23 CEST","vxid":"3/0","txid":0,"error_severity":"LOG","state_code":"08006","message":"could not receive data from client: Connection reset by peer","application_name":"PostgreSQL JDBC Driver","backend_type":"client backend","query_id":0}
-{"timestamp":"2026-07-15 05:05:44.727 CEST","user":"ycsb","dbname":"ycsb","pid":518,"remote_host":"127.0.0.1","remote_port":44794,"session_id":"6a56f83f.206","line_num":1,"ps":"idle","session_start":"2026-07-15 05:02:23 CEST","vxid":"4/0","txid":0,"error_severity":"LOG","state_code":"08006","message":"could not receive data from client: Connection reset by peer","application_name":"PostgreSQL JDBC Driver","backend_type":"client backend","query_id":0}
-{"timestamp":"2026-07-15 05:05:44.727 CEST","user":"ycsb","dbname":"ycsb","pid":517,"remote_host":"127.0.0.1","remote_port":44776,"session_id":"6a56f83f.205","line_num":1,"ps":"idle","session_start":"2026-07-15 05:02:23 CEST","vxid":"5/0","txid":0,"error_severity":"LOG","state_code":"08006","message":"could not receive data from client: Connection reset by peer","application_name":"PostgreSQL JDBC Driver","backend_type":"client backend","query_id":0}
+{
+    "timestamp": "2026-07-15 05:02:22.122 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 1,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "ending log output to stderr",
+    "hint": "Future log output will go to log destination \"jsonlog\".",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.122 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 2,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "starting PostgreSQL 18.4 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 16.1.1 20260430, 64-bit",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.122 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 3,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "listening on IPv6 address \"::1\", port 5432",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.122 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 4,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "listening on IPv4 address \"127.0.0.1\", port 5432",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.134 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 5,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "listening on Unix socket \"/run/postgresql/.s.PGSQL.5432\"",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.153 CEST",
+    "pid": 404,
+    "session_id": "6a56f83e.194",
+    "line_num": 1,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "database system was shut down at 2026-07-15 05:02:12 CEST",
+    "backend_type": "startup",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.188 CEST",
+    "pid": 396,
+    "session_id": "6a56f83e.18c",
+    "line_num": 6,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "database system is ready to accept connections",
+    "backend_type": "postmaster",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:22.320 CEST",
+    "pid": 407,
+    "session_id": "6a56f83e.197",
+    "line_num": 1,
+    "session_start": "2026-07-15 05:02:22 CEST",
+    "vxid": "118/0",
+    "txid": 0,
+    "error_severity": "LOG",
+    "message": "autoprewarm successfully prewarmed 16244 of 16384 previously-loaded blocks",
+    "backend_type": "autoprewarm leader",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:02:23.507 CEST",
+    "user": "user",
+    "dbname": "user",
+    "pid": 438,
+    "remote_host": "127.0.0.1",
+    "remote_port": 44744,
+    "session_id": "6a56f83f.1b6",
+    "line_num": 1,
+    "ps": "startup",
+    "session_start": "2026-07-15 05:02:23 CEST",
+    "vxid": "0/1",
+    "txid": 0,
+    "error_severity": "FATAL",
+    "state_code": "28000",
+    "message": "role \"user\" does not exist",
+    "backend_type": "client backend",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:05:44.727 CEST",
+    "user": "ycsb",
+    "dbname": "ycsb",
+    "pid": 516,
+    "remote_host": "127.0.0.1",
+    "remote_port": 44778,
+    "session_id": "6a56f83f.204",
+    "line_num": 1,
+    "ps": "idle",
+    "session_start": "2026-07-15 05:02:23 CEST",
+    "vxid": "2/0",
+    "txid": 0,
+    "error_severity": "LOG",
+    "state_code": "08006",
+    "message": "could not receive data from client: Connection reset by peer",
+    "application_name": "PostgreSQL JDBC Driver",
+    "backend_type": "client backend",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:05:44.727 CEST",
+    "user": "ycsb",
+    "dbname": "ycsb",
+    "pid": 519,
+    "remote_host": "127.0.0.1",
+    "remote_port": 44798,
+    "session_id": "6a56f83f.207",
+    "line_num": 1,
+    "ps": "idle",
+    "session_start": "2026-07-15 05:02:23 CEST",
+    "vxid": "3/0",
+    "txid": 0,
+    "error_severity": "LOG",
+    "state_code": "08006",
+    "message": "could not receive data from client: Connection reset by peer",
+    "application_name": "PostgreSQL JDBC Driver",
+    "backend_type": "client backend",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:05:44.727 CEST",
+    "user": "ycsb",
+    "dbname": "ycsb",
+    "pid": 518,
+    "remote_host": "127.0.0.1",
+    "remote_port": 44794,
+    "session_id": "6a56f83f.206",
+    "line_num": 1,
+    "ps": "idle",
+    "session_start": "2026-07-15 05:02:23 CEST",
+    "vxid": "4/0",
+    "txid": 0,
+    "error_severity": "LOG",
+    "state_code": "08006",
+    "message": "could not receive data from client: Connection reset by peer",
+    "application_name": "PostgreSQL JDBC Driver",
+    "backend_type": "client backend",
+    "query_id": 0
+}
+{
+    "timestamp": "2026-07-15 05:05:44.727 CEST",
+    "user": "ycsb",
+    "dbname": "ycsb",
+    "pid": 517,
+    "remote_host": "127.0.0.1",
+    "remote_port": 44776,
+    "session_id": "6a56f83f.205",
+    "line_num": 1,
+    "ps": "idle",
+    "session_start": "2026-07-15 05:02:23 CEST",
+    "vxid": "5/0",
+    "txid": 0,
+    "error_severity": "LOG",
+    "state_code": "08006",
+    "message": "could not receive data from client: Connection reset by peer",
+    "application_name": "PostgreSQL JDBC Driver",
+    "backend_type": "client backend",
+    "query_id": 0
+}
