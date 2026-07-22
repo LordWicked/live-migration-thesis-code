@@ -46,7 +46,6 @@ class Config:
     readmodification_proportion: float
     scan_proportion: float
     sleep_timer: float
-    additional_args: Optional[str] = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,7 +82,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--readmodification-proportion", type=float, default=0, help="Proportion of readmodification operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--scan-proportion", type=float, default=0, help="Proportion of scan operations for PostgreSQL YCSB benchmark. Default = 0")
     parser.add_argument("--sleep-timer", type=float, default=0.0, help="Introduce a wait period between benchmark and restart in seconds")
-    parser.add_argument("--additional-args", type=str, default=None, help="Additional QEMU command line arguments (i.e. for postcopy or CPU setup)")
     return parser
 
 def create_overlay_image(base: Path, overlay: Path) -> None:
@@ -401,7 +399,6 @@ async def main() -> None:
                 create_overlay_image(base=config.standby_image, overlay=dst_overlay)
 
             src_vm = start_vm(overlay=overlay, ssh_port=src_port, qmp_sock=src_sock, log_file=src_log, mem_gb=config.mem_gb, cores=config.cores, cpu=config.cpu, source=True)
-            
             event_logger.mark(
                 "source_vm_started",
                 f"pid={src_vm.pid}",

@@ -4,7 +4,7 @@
 # The generated code and the resulting plots were subsequently reviewed and validated by the author
 # 
 # It is secondary to the work of the Bachelor's Thesis "An Analysis of Live Migration and Its Security Implications" 
-# and serves to aggregate the data which my benchmark scripts generate in the form of logs and timestamp .csv files.
+# and serves to aggregate the data which the author's benchmark scripts generate in the form of logs and timestamped .csv files.
  
 
 
@@ -248,7 +248,7 @@ def add_nan_restart_gap(xs, *value_series, markers):
 
 
 def update_controlled_switchover_time(restart_marker, source_x, destination_x):
-    if restart_marker is None or not restart_marker["prepared"]:
+    if restart_marker is None:
         return
     if source_x is None or destination_x is None:
         return
@@ -258,7 +258,7 @@ def update_controlled_switchover_time(restart_marker, source_x, destination_x):
         return
 
     previous = restart_marker.get("controlled_switchover_time")
-    if previous is None or duration < previous:
+    if previous is None:
         restart_marker["controlled_switchover_time"] = duration
 
 
@@ -422,7 +422,7 @@ def draw_migration_note(downtimes, migration_durations):
     if downtimes:
         note_lines.append(f"Median downtime window: {format_duration(median(downtimes))}")
     if migration_durations:
-        note_lines.append(f"Median migration duration: {format_duration(median(migration_durations))}")
+        note_lines.append(f"Median QMP migration duration: {format_duration(median(migration_durations))}")
     draw_note(note_lines)
 
 
@@ -439,7 +439,7 @@ def preparation_phase_durations(markers):
 
 def draw_restart_note(
     restart_durations,
-    label="Median restart downtime",
+    label="Median service interruption",
     preparation_durations=None,
 ):
     note_lines = []
@@ -447,7 +447,7 @@ def draw_restart_note(
         note_lines.append(f"{label}: {format_duration(median(restart_durations))}")
     if preparation_durations:
         note_lines.append(
-            f"Preparation phase duration: {format_duration(median(preparation_durations))}"
+            f"WAL catch-up duration: {format_duration(median(preparation_durations))}"
         )
     draw_note(note_lines)
 
@@ -464,6 +464,28 @@ def read_downtime_seconds(path):
         downtime_ms = mig.get("downtime")
         if downtime_ms is not None:
             return float(downtime_ms) / 1000.0
+
+    return None
+
+
+def read_qmp_duration_seconds(path):
+    if not path.exists():
+        return None
+
+    with path.open() as handle:
+        samples = json.load(handle)
+
+    for sample in reversed(samples):
+        migration = sample.get("query_migrate", sample)
+        ram = migration.get("ram")
+        total_time_ms = migration.get("total-time")
+        if (
+            migration.get("status") == "completed"
+            and isinstance(ram, dict)
+            and ram
+            and total_time_ms is not None
+        ):
+            return float(total_time_ms) / 1000.0
 
     return None
 
@@ -528,6 +550,7 @@ def read_timing_markers(scenario_dir, timing_csv):
 
         for row in reader:
             run = int(row["run"])
+            qmp_path = scenario_dir / f"mig-stats-run-{run}.json"
             benchmark_start = float(row["benchmark_start"])
             destination_boot = float(row["destination_boot"]) - benchmark_start if row.get("destination_boot") else None
             migration_start = float(row["migration_start"]) - benchmark_start
@@ -537,7 +560,7 @@ def read_timing_markers(scenario_dir, timing_csv):
             downtime = (
                 stop_copy_gap[1] - stop_copy_gap[0]
                 if stop_copy_gap is not None
-                else read_downtime_seconds(scenario_dir / f"mig-stats-run-{run}.json")
+                else read_downtime_seconds(qmp_path)
             )
 
             markers.append({
@@ -545,6 +568,7 @@ def read_timing_markers(scenario_dir, timing_csv):
                 "destination_boot": destination_boot,
                 "migration_start": migration_start,
                 "migration_end": migration_end,
+                "migration_duration_qmp": read_qmp_duration_seconds(qmp_path),
                 "downtime": downtime,
                 # "stop_copy_gap": read_stop_copy_gap(scenario_dir, run, benchmark_start),
                 "stop_copy_gap": stop_copy_gap,
@@ -591,7 +615,7 @@ def read_restart_markers(scenario_dir, timing_csv):
             prepared = ssh2_ready_raw < shutdown_request_raw
             resume_raw = (
                 benchmark_resume_raw
-                if prepared and benchmark_resume_raw > 0.0
+                if benchmark_resume_raw > 0.0
                 else promotion_done_raw
                 if prepared and promotion_done_raw > 0.0
                 else postgres2_ready_raw
@@ -669,8 +693,9 @@ def draw_timing_markers(markers, mode):
             if marker.get("stop_copy_gap") is not None
         ]
         migration_durations = [
-            marker["migration_end"] - marker["migration_start"]
+            marker["migration_duration_qmp"]
             for marker in markers
+            if marker["migration_duration_qmp"] is not None
         ]
 
         if destination_boots:
@@ -729,8 +754,9 @@ def draw_timing_markers(markers, mode):
         if marker["downtime"] is not None
     ]
     migration_durations = [
-        marker["migration_end"] - marker["migration_start"]
+        marker["migration_duration_qmp"]
         for marker in markers
+        if marker["migration_duration_qmp"] is not None
     ]
 
     for marker in markers:
@@ -813,7 +839,7 @@ def draw_restart_markers(markers, mode):
         ]
         postgres_label = restart_postgres_label(markers)
         ssh_label = restart_ssh_label(markers)
-        restart_durations = controlled_switchover_times if prepared else [
+        restart_durations = controlled_switchover_times or [
             marker["resume"] - marker["shutdown_request"] for marker in markers
         ]
 
@@ -832,7 +858,9 @@ def draw_restart_markers(markers, mode):
             label="Shutdown finished",
         )
         plt.axvspan(
-            resume - median(controlled_switchover_times) if prepared and controlled_switchover_times else shutdown_request,
+            resume - median(controlled_switchover_times)
+            if controlled_switchover_times
+            else shutdown_request,
             resume,
             color="tab:red",
             alpha=0.12,
@@ -887,9 +915,9 @@ def draw_restart_markers(markers, mode):
             label=postgres_label,
         )
         note_label = (
-            "Median controlled switchover time"
+            "Median service interruption"
             if prepared
-            else "Median restart downtime"
+            else "Median service interruption"
         )
         draw_restart_note(
             restart_durations,
@@ -911,7 +939,7 @@ def draw_restart_markers(markers, mode):
     }
     restart_durations = [
         marker.get("controlled_switchover_time")
-        if marker["prepared"] and marker.get("controlled_switchover_time") is not None
+        if marker.get("controlled_switchover_time") is not None
         else marker["resume"] - marker["shutdown_request"]
         for marker in markers
     ]
@@ -934,7 +962,7 @@ def draw_restart_markers(markers, mode):
         )
         plt.axvspan(
             marker["resume"] - marker["controlled_switchover_time"]
-            if marker["prepared"] and marker.get("controlled_switchover_time") is not None
+            if marker.get("controlled_switchover_time") is not None
             else marker["shutdown_request"],
             marker["resume"],
             color="tab:red",
@@ -994,9 +1022,9 @@ def draw_restart_markers(markers, mode):
             label=labels.pop("resume", None),
         )
     note_label = (
-        "Median controlled switchover time"
+        "Median Median service interruption"
         if all(marker["prepared"] for marker in markers)
-        else "Median restart downtime"
+        else "Median service interruption"
     )
     draw_restart_note(
         restart_durations,
@@ -1589,7 +1617,7 @@ def plot_scenario(args, scenario_dir, output=None):
         marker["run"]: marker
         for marker in restart_markers
     }
-    if any(marker["prepared"] for marker in restart_markers):
+    if restart_markers:
         collect_series(
             run_groups,
             "elapsed_sec",
@@ -1635,6 +1663,14 @@ def plot_scenario(args, scenario_dir, output=None):
             marker["run"]: marker
             for marker in overlay_restart_markers
         }
+        collect_series(
+            overlay_run_groups,
+            "elapsed_sec",
+            "current_ops_per_sec",
+            overlay_restart_markers_by_run,
+            zero_restart_gap=False,
+            drop_last_sample=True,
+        )
         primary_label = args.primary_label or name
         restart_overlay_label = (
             args.restart_overlay_label

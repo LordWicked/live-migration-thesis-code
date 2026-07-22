@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
-RUNS=1
-DIRECTORY="logs_14_major"
+RUNS=10
+DIRECTORY="logs_14_major" # This was the configuration used for the thesis data
 RECORDS=2500000
 
 mig_runner() {
@@ -107,56 +107,38 @@ restart_runner() {
 # 4 Threads, 250k Ops take roughly 200 seconds
 # 4 Threads, 400k Ops should take just over 300 seconds
 
-# # Raw # was 1000000
-echo -e "Baseline_4T:" && restart_runner "Baseline_4T_run1" 8 0 4 host 250000 4 0 0 1 0 0 0 0 0 0 && echo
+# Raw # was 1000000
+echo -e "Baseline_4T:" && restart_runner "Baseline_4T" 8 0 4 host 250000 4 0 0 1 0 0 0 0 0 0 && echo
 echo -e "Baseline_16T:" && restart_runner "Baseline_16T" 8 0 4 host 500000 16 0 0 1 0 0 0 0 0 0 && echo
-## echo -e "Baseline_16T_Reads:" && restart_runner "Baseline_16T_Reads" 8 0 4 host 5000000 16 0 0.9 0.1 0 0 0 0 0 0 && echo
+# echo -e "Baseline_16T_Reads:" && restart_runner "Baseline_16T_Reads" 8 0 4 host 5000000 16 0 0.9 0.1 0 0 0 0 0 0 && echo
 echo -e "Baseline_16T_OnlyReads:" && restart_runner "Baseline_16T_OnlyReads" 8 0 4 host 2147483647 16 0 1 0 0 0 0 0 0 0 && echo
 
 # Precopy 1: Bench faster than migration -> Migration finishes after bench (/waren 1000000)
-echo -e "Precopy_Convergent:" && mig_runner "Precopy_Convergent" 8 150 4 0 host 250000 4 0 0 1 0 0 0 0 0 && echo        # war 100s, genau auf dip
+echo -e "Precopy_Convergent:" && mig_runner "Precopy_Convergent" 8 150 4 0 host 250000 4 0 0 1 0 0 0 0 0 && echo
 
 # Precopy 2: Bench slower -> Migration happens quickly after call (waren 100000)
 echo -e "Precopy_Nonconvergent_16T:" && mig_runner "Precopy_Nonconvergent_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 0 0 && echo        
-## echo -e "Precopy_Nonconvergent_Reads_16T:" && mig_runner "Precopy_Nonconvergent_Reads_16T" 8 100 4 0 host 5000000 16 0 0.9 0.1 0 0 0 0 0 && echo  # run again
-echo -e "Precopy_Nonconvergent_OnlyReads_16T:" && mig_runner "Precopy_Nonconvergent_OnlyReads_16T" 8 100 4 0 host 2147483647 16 0 1 0 0 0 0 0 0 && echo  # run again
+# echo -e "Precopy_Nonconvergent_Reads_16T:" && mig_runner "Precopy_Nonconvergent_Reads_16T" 8 100 4 0 host 5000000 16 0 0.9 0.1 0 0 0 0 0 && echo
+echo -e "Precopy_Nonconvergent_OnlyReads_16T:" && mig_runner "Precopy_Nonconvergent_OnlyReads_16T" 8 100 4 0 host 2147483647 16 0 1 0 0 0 0 0 0 && echo
 
 # Postcopy: # alle waren 1000000
-## echo -e "post_light_1T:" && mig_runner "post_light_1T" 8 100 4 2 host 100000 1 0 0 1 0 0 0 0 0 && echo
-echo -e "Postcopy_4T:" && mig_runner "Postcopy_4T" 8 150 4 2 host 250000 4 0 0 1 0 0 0 0 0 && echo                      # war 100s, genau auf dip
+echo -e "Postcopy_4T:" && mig_runner "Postcopy_4T" 8 150 4 2 host 250000 4 0 0 1 0 0 0 0 0 && echo
 echo -e "Postcopy_16T:" && mig_runner "Postcopy_16T" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 0 && echo
 
-# Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy) waren 500000
+# Precopy 3: Immediate precopy -> immediate downtime and transition (QMP stop-and-copy)
 echo -e "Stop_Copy:" && mig_runner "Stop_Copy_4T" 8 150 4 1 host 250000 4 0 0 1 0 0 0 0 0 && echo
 
 # Precopy Autoconverge:
 echo -e "Autoconverge_16T:" && mig_runner "Autoconverge_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 1 0 && echo
 
-# Belated Postcopy:
+# Delayed Postcopy:
 echo -e "Postcopy_Late_16T_5s:" && mig_runner "Postcopy_Late_16T_5s" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 5 && echo
 echo -e "Postcopy_Late_16T_25s:" && mig_runner "Postcopy_Late_16T_25s" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 25 && echo
 echo -e "Postcopy_Late_16T_40s:" && mig_runner "Postcopy_Late_16T_40s" 8 100 4 2 host 500000 16 0 0 1 0 0 0 0 40 && echo
 
-# # Restart 1: Clean shutdown during benchmark (11:cold 12:prewarmed)
+# Restart 1: Clean shutdown during benchmark
 echo -e "Cold_Restart_4T:" && restart_runner "Cold_Restart_4T" 8 150 4 host 250000 4 0 0 1 0 0 0 1 0 0 && echo
 echo -e "Prewarmed_4T:" && restart_runner "Prewarmed_4T" 8 150 4 host 250000 4 0 0 1 0 0 0 1 1 0 && echo
 
-# Restart 2: Clean shutdown with prepared restart (21:cold 22:prewarmed)
+# # Restart 2: Clean shutdown with prepared restart
 echo -e "Prepared_4T:" && restart_runner "Prepared_4T" 8 150 4 host 250000 4 0 0 1 0 0 0 1 0 1 && echo
-
-# TODO standard YCSB?
-
-
-
-
-# Lost Benchmarks:
-# echo -e "raw_clean_1T:" && restart_runner "raw_clean_1T" 8 0 4 host 100000 1 0 0 1 0 0 0 0 0 0 && echo
-# echo -e "pre_light_convergent:" && mig_runner "pre_light_convergent" 8 100 4 0 host 100000 1 0 0 1 0 0 0 0 0 && echo
-# echo -e "post_late_12T:" && mig_runner "spam_betterstatus_pretopost_late_50s_12T" 8 100 4 2 host 500000 12 0 0 1 0 0 0 0 50 && echo
-# echo -e "pre_nonconvergent_12T:" && mig_runner "spam_pre_nonconvergent_12T" 8 100 4 0 host 500000 12 0 0 1 0 0 0 0 0 && echo        
-# echo -e "raw:" && restart_runner "raw_stress_8T" 8 0 4 host 500000 8 0 0 1 0 0 0 0 0 0 && echo       # 8GB, 100k ops, 1 threads, 100% writes, 00 sec sleep, no restart
-# echo -e "raw:" && restart_runner "raw_stress_16T" 8 0 4 host 500000 16 0 0 1 0 0 0 0 0 0 && echo       # 8GB, 100k ops, 1 threads, 100% writes, 00 sec sleep, no restart
-
-# echo -e "pre_11:" && mig_runner "pre_stress_8T_1500guest" 8 100 4 0 host 500000 8 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep
-# echo -e "pre_11:" && mig_runner "pre_stress_12T" 8 100 4 0 host 500000 12 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep
-# echo -e "pre_11:" && mig_runner "pre_stress_16T" 8 100 4 0 host 500000 16 0 0 1 0 0 0 0 && echo      # 8GB, 100k ops, 1 threads, 100% writes, 05 sec sleep

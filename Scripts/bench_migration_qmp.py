@@ -443,7 +443,6 @@ async def main() -> None:
         if dlog_path.exists(): dlog_path.unlink()
         src_log = open(config.log_path/f"src-run-{run}.log", "w")
         dst_log = open(config.log_path/f"dst-run-{run}.log", "w")
-        # mig_log = open(config.log_path/f"mig-stats-run-{run}.json", "w")
         src = VMMonitor(f"src{run}", src_sock, src_log)
         dst = VMMonitor(f"dst{run}", dst_sock, dst_log)
         overlay = config.overlay / f"run{run}.qcow2"
@@ -514,7 +513,6 @@ async def main() -> None:
             ssh_command(user=config.guest_user, port=src_port, key=config.ssh_key, remote_cmd="systemd-analyze", timeout=10.0, log_file=src_log)
 
             # Postgres payload (needs to return yscb-a run output)
-            # timeout 200
             if config.read_proportion == 1.0:
                 bench_command = f"cd ycsb-0.17.0 && timeout 200 bin/ycsb.sh run  jdbc -P workloads/workloada -P db.properties -p recordcount={config.record_count} -p operationcount={config.operation_count} -threads {config.threads} -s -p status.interval=1 -p writeproportion={config.write_proportion_dep} -p readproportion={config.read_proportion} -p updateproportion={config.update_proportion} -p insertproportion={config.insert_proportion} -p scanproportion={config.scan_proportion} -p readmodifywriteproportion={config.readmodification_proportion}"
             else:
@@ -584,27 +582,7 @@ async def main() -> None:
                     migration_done = True
 
                     if config.migration_mode == 2:
-                        # with open(config.log_path/f"hugepages-{run}.log", "w") as log:
                         asyncio.create_task(repeated_hp_poll(dst_vm=dst_vm, log=Path(f"{config.log_path}/hugepages-{run}.log")))
-                        # smaps_path = f"/proc/{dst_vm.pid}/smaps_rollup"
-
-                        # hugepages = subprocess.run(
-                        #     [
-                        #         "grep",
-                        #         "-E",
-                        #         "^(Rss|Pss|AnonHugePages):",
-                        #         smaps_path,
-                        #     ],
-                        #     text=True, capture_output=True, timeout=5,
-                        # )
-
-                        # if hugepages.returncode == 0:
-                        #     print(hugepages.stdout)
-                        # else:
-                        #     print(
-                        #         f"Failed to read {smaps_path}: "
-                        #         f"{hugepages.stderr.strip()}"
-                        #     )
                     try: 
                         event_logger.mark(
                             "source_terminate_requested",

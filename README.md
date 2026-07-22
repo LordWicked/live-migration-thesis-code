@@ -10,4 +10,4 @@ This repository contains relevant data for the bachelor's thesis
 > [bench_mig_pgvm.sh](/Scripts/bench_mig_pgvm.sh) and [bench_restart_pgvm.sh](/Scripts/bench_restart_pgvm.sh) are the precursors to the now used python scripts. They were initially used to familiarize myself with QMP and the socket logic before the switch to Python.
 > [vm_status.sh](/Scripts/vm_status.sh), [vm_query.sh](/Scripts/vm_query.sh), [vm_launcher.sh](/Scripts/vm_launcher.sh), [vm_shutdown.sh](/Scripts/vm_shutdown.sh), [vm_migrate.sh](/Scripts/vm_migrate.sh), [vm_launcher.sh](/Scripts/vm_launcher.sh), and [launcher_base.sh](/Scripts/launcher_base.sh) were created during the initial phase of the thesis work while learning the logic of QEMU/QMP.
 
-### The current experimental state, results, logs, and plots can be found in [this directory](logs_14_major).
+### The current experimental state, results, logs, and [plots](/logs_14_major/plots/) can be found in [this directory](logs_14_major).
