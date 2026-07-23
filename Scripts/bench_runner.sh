@@ -41,7 +41,7 @@ mig_runner() {
     --operation-count "${opcount}" \
     --record-count "${RECORDS}" \
     --threads "${threads}" \
-    --write-proportion "${write}" \
+    --write-proportion-dep "${write}" \
     --read-proportion "${read}" \
     --update-proportion "${upd}" \
     --insert-proportion "${ins}" \
